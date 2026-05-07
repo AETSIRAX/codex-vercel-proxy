@@ -1,0 +1,3621 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="warm">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex Proxy Console</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f3f0e7;
+        --paper-2: #e7e2d6;
+        --surface: #fbfaf6;
+        --surface-2: #f7f4ec;
+        --ink: #171611;
+        --ink-2: #353229;
+        --muted: #787364;
+        --line: #d8d0bf;
+        --line-soft: #e6dfcf;
+        --accent: #0f6558;
+        --accent-2: #1d4ed8;
+        --accent-soft: #deebe4;
+        --good: #1f7a44;
+        --good-soft: #e0efe5;
+        --warn: #9a640a;
+        --warn-soft: #f1e3c4;
+        --bad: #a62a27;
+        --bad-soft: #f2d9d5;
+        --chart-request: #b83280;
+        --strong-control-bg: var(--ink);
+        --strong-control-fg: var(--paper);
+        --strong-control-pill: rgb(255 255 255 / 18%);
+        --shadow: 0 18px 48px rgb(36 31 19 / 9%);
+      }
+
+      [data-theme="cool"] {
+        --paper: #eef2f6;
+        --paper-2: #e1e8ef;
+        --surface: #ffffff;
+        --surface-2: #f5f8fb;
+        --ink: #101820;
+        --ink-2: #273443;
+        --muted: #687586;
+        --line: #ccd6e2;
+        --line-soft: #e0e7ef;
+        --accent: #1d4ed8;
+        --accent-2: #0f766e;
+        --accent-soft: #dfe8fb;
+        --good: #15803d;
+        --good-soft: #ddf1e5;
+        --warn: #92610a;
+        --warn-soft: #f2e3c4;
+        --bad: #af2629;
+        --bad-soft: #f5dbdc;
+        --chart-request: #b83280;
+      }
+
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --paper: #101211;
+        --paper-2: #171a18;
+        --surface: #1b1e1b;
+        --surface-2: #151815;
+        --ink: #ece9df;
+        --ink-2: #cfc9ba;
+        --muted: #918b7a;
+        --line: #2d302b;
+        --line-soft: #242722;
+        --accent: #66c6a7;
+        --accent-2: #8db2ff;
+        --accent-soft: #1e302a;
+        --good: #7ddca1;
+        --good-soft: #183020;
+        --warn: #e0ac60;
+        --warn-soft: #332711;
+        --bad: #ef817b;
+        --bad-soft: #3a1f1c;
+        --chart-request: #ff7ab6;
+        --strong-control-bg: #8e8d86;
+        --strong-control-fg: #101211;
+        --strong-control-pill: rgb(16 18 17 / 18%);
+        --shadow: 0 20px 52px rgb(0 0 0 / 26%);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-width: 320px;
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 14px;
+        letter-spacing: 0;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button,
+      input,
+      textarea,
+      select {
+        font: inherit;
+        letter-spacing: 0;
+      }
+
+      button {
+        border: 0;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      .mono {
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        overflow-wrap: anywhere;
+      }
+
+      .app {
+        display: grid;
+        grid-template-columns: 224px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+
+      .rail {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        border-right: 1px solid var(--line);
+        background: var(--paper-2);
+        padding: 18px 14px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 4px;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+
+      .mark {
+        width: 31px;
+        height: 31px;
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        background: var(--strong-control-bg);
+        color: var(--strong-control-fg);
+        font-weight: 760;
+        font-size: 13px;
+      }
+
+      .brand b {
+        display: block;
+        font-size: 14px;
+        font-weight: 720;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .brand small {
+        display: block;
+        margin-top: 1px;
+        color: var(--muted);
+        font-size: 11.5px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .brand-copy {
+        /* 品牌文案在侧栏动画中只裁剪不换行，避免宽度变化时出现跳动。 */
+        min-width: 0;
+        max-width: 150px;
+        overflow: hidden;
+        opacity: 1;
+        transition:
+          max-width 0.2s ease,
+          opacity 0.12s ease;
+      }
+
+      .nav {
+        display: grid;
+        gap: 3px;
+      }
+
+      .nav button,
+      .rail-foot button,
+      .icon-button,
+      .button,
+      .seg button {
+        cursor: pointer;
+      }
+
+      .nav button {
+        width: 100%;
+        min-height: 33px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--ink-2);
+        padding: 0 10px;
+        text-align: left;
+        font-size: 13px;
+        font-weight: 650;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+
+      .nav button:hover {
+        background: rgb(127 127 127 / 9%);
+      }
+
+      .nav button.active {
+        background: var(--strong-control-bg);
+        color: var(--strong-control-fg);
+      }
+
+      .nav svg,
+      .rail-foot svg,
+      .button svg,
+      .icon-button svg {
+        /* 固定所有按钮图标尺寸，防止裸 SVG 使用浏览器默认尺寸把按钮撑大。 */
+        width: 14px;
+        height: 14px;
+        flex: 0 0 auto;
+      }
+
+      .rail-foot {
+        margin-top: auto;
+        display: grid;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.55;
+      }
+
+      .rail-foot button {
+        width: 100%;
+        height: 30px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 7px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--ink-2);
+        padding: 0 10px;
+        font-size: 12px;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+
+      .side-label {
+        /* 标签独立于按钮宽度变化，避免侧栏动画过程中发生自动换行和重排。 */
+        display: inline-block;
+        max-width: 128px;
+        overflow: hidden;
+        white-space: nowrap;
+        opacity: 1;
+        transition: opacity 0.12s ease;
+      }
+
+      .main {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        padding: 18px 24px 48px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 34px;
+      }
+
+      .crumbs {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .crumbs b {
+        color: var(--ink);
+      }
+
+      .spacer {
+        flex: 1;
+      }
+
+      .conn {
+        min-height: 31px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--ink-2);
+        padding: 0 11px;
+        font-size: 12px;
+      }
+
+      .conn-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--muted);
+      }
+
+      .conn.ready .conn-dot {
+        background: var(--good);
+        box-shadow: 0 0 0 3px color-mix(in oklab, var(--good) 24%, transparent);
+      }
+
+      .conn-url {
+        max-width: 240px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--muted);
+      }
+
+      .icon-button {
+        width: 31px;
+        height: 31px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--ink-2);
+      }
+
+      .icon-button:hover {
+        border-color: var(--ink-2);
+      }
+
+      .connect-panel {
+        display: grid;
+        grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 1.4fr) auto auto;
+        gap: 12px;
+        align-items: end;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        padding: 14px 16px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 720;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      input,
+      textarea,
+      select {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--paper);
+        color: var(--ink);
+        outline: none;
+      }
+
+      input,
+      select {
+        height: 34px;
+        padding: 0 10px;
+      }
+
+      textarea {
+        min-height: 150px;
+        resize: vertical;
+        padding: 10px;
+        line-height: 1.5;
+        font-size: 12px;
+      }
+
+      input:focus,
+      textarea:focus,
+      select:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 20%, transparent);
+      }
+
+      .button {
+        min-height: 34px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--ink);
+        padding: 0 12px;
+        font-size: 13px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+
+      .button:hover:not(:disabled) {
+        border-color: var(--ink-2);
+      }
+
+      .button.primary {
+        border-color: var(--strong-control-bg);
+        background: var(--strong-control-bg);
+        color: var(--strong-control-fg);
+      }
+
+      .button.ghost {
+        border-color: transparent;
+        background: transparent;
+        color: var(--ink-2);
+      }
+
+      .button.ghost:hover:not(:disabled) {
+        border-color: var(--line);
+        background: rgb(127 127 127 / 8%);
+      }
+
+      .button.danger {
+        border-color: color-mix(in oklab, var(--bad) 30%, var(--line));
+        color: var(--bad);
+      }
+
+      .button.sm {
+        min-height: 28px;
+        border-radius: 6px;
+        padding: 0 9px;
+        font-size: 12px;
+      }
+
+      .button:disabled,
+      .icon-button:disabled,
+      .nav button:disabled,
+      .seg button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      .notice {
+        min-height: 20px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+
+      .notice.ok {
+        color: var(--good);
+      }
+
+      .notice.error {
+        color: var(--bad);
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .stat {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 11px 12px;
+      }
+
+      .stat .label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 720;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .stat .value {
+        margin-top: 7px;
+        color: var(--ink);
+        font-size: 23px;
+        font-weight: 760;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .stat.good .value {
+        color: var(--good);
+      }
+
+      .stat.warn .value {
+        color: var(--warn);
+      }
+
+      .stat.bad .value {
+        color: var(--bad);
+      }
+
+      .stat .foot {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .view {
+        display: none;
+      }
+
+      .view.active {
+        display: grid;
+        gap: 14px;
+      }
+
+      .dashboard-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 14px;
+        align-items: start;
+      }
+
+      .overview-grid {
+        grid-template-columns: minmax(0, 1fr) 340px;
+      }
+
+      .panel {
+        min-width: 0;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+      }
+
+      .panel-head {
+        min-height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border-bottom: 1px solid var(--line);
+        padding: 10px 14px;
+      }
+
+      .panel-head h2,
+      .panel-head h3 {
+        font-size: 14px;
+        font-weight: 760;
+      }
+
+      .panel-head .meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .panel-head .right {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        flex-wrap: wrap;
+      }
+
+      .usage-head {
+        flex-wrap: nowrap;
+      }
+
+      .panel-head .right.usage-tools {
+        /* 时间范围和刷新是同一组操作，使用网格避免被全局 flex 换行规则拆开。 */
+        display: grid;
+        grid-template-columns: auto auto;
+        align-items: center;
+        flex-wrap: nowrap;
+      }
+
+      .range-seg {
+        display: inline-grid;
+        grid-template-columns: repeat(3, auto);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface-2);
+        padding: 2px;
+      }
+
+      .range-seg button {
+        min-width: 42px;
+        height: 28px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        padding: 0 9px;
+        font-size: 12px;
+        font-weight: 720;
+        cursor: pointer;
+      }
+
+      .range-seg button.active {
+        background: var(--surface);
+        color: var(--ink);
+        box-shadow: inset 0 0 0 1px var(--line-soft);
+      }
+
+      .chart-card {
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1fr);
+        gap: 8px 14px;
+        align-items: start;
+        padding: 12px 16px 12px;
+      }
+
+      .chart-total .label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 720;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .chart-total .value {
+        margin-top: 4px;
+        font-size: 24px;
+        font-weight: 760;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .chart {
+        width: 100%;
+        height: 260px;
+        display: block;
+      }
+
+      .chart-plot {
+        position: relative;
+        min-width: 0;
+      }
+
+      .chart-segment,
+      .chart-hit {
+        cursor: crosshair;
+      }
+
+      .chart-segment {
+        shape-rendering: crispEdges;
+      }
+
+      .chart-grid {
+        stroke: var(--line-soft);
+        stroke-width: 0.45;
+        vector-effect: non-scaling-stroke;
+      }
+
+      .chart-axis {
+        stroke: var(--line);
+        stroke-width: 0.65;
+        vector-effect: non-scaling-stroke;
+      }
+
+      .chart-line {
+        fill: none;
+        stroke: var(--chart-request);
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        vector-effect: non-scaling-stroke;
+        pointer-events: none;
+      }
+
+      .chart-tooltip {
+        position: absolute;
+        z-index: 5;
+        min-width: 210px;
+        max-width: 250px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: color-mix(in oklab, var(--surface) 94%, var(--paper) 6%);
+        box-shadow: var(--shadow);
+        padding: 9px 10px;
+        color: var(--ink-2);
+        font-size: 12px;
+        line-height: 1.55;
+        pointer-events: none;
+        white-space: pre-line;
+      }
+
+      .chart-plot,
+      .chart-legend {
+        grid-column: 1 / -1;
+      }
+
+      .chart-legend {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 10px 16px;
+        color: var(--ink-2);
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .chart-legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+      }
+
+      .chart-legend i {
+        width: 10px;
+        height: 10px;
+        display: inline-block;
+        border-radius: 3px;
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 14px;
+      }
+
+      .list {
+        display: grid;
+      }
+
+      .rank-row,
+      .endpoint-row,
+      .kv-row,
+      .event-row {
+        display: grid;
+        gap: 8px;
+        border-bottom: 1px solid var(--line-soft);
+        padding: 10px 14px;
+      }
+
+      .rank-row:last-child,
+      .endpoint-row:last-child,
+      .kv-row:last-child,
+      .event-row:last-child {
+        border-bottom: 0;
+      }
+
+      .rank-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+      }
+
+      .rank-main {
+        min-width: 0;
+      }
+
+      .rank-title {
+        overflow: hidden;
+        color: var(--ink);
+        font-weight: 680;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .rank-sub {
+        margin-top: 3px;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .rank-num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .rank-num b {
+        display: block;
+        font-weight: 760;
+      }
+
+      .rank-num span {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        border-bottom: 1px solid var(--line-soft);
+        background: var(--surface-2);
+        padding: 8px 12px;
+      }
+
+      .search {
+        position: relative;
+        flex: 1;
+        min-width: 180px;
+        max-width: 340px;
+      }
+
+      .search svg {
+        position: absolute;
+        left: 9px;
+        top: 50%;
+        width: 13px;
+        height: 13px;
+        color: var(--muted);
+        transform: translateY(-50%);
+      }
+
+      .search input {
+        height: 30px;
+        padding-left: 30px;
+        background: var(--surface);
+        font-size: 12.5px;
+      }
+
+      .seg {
+        display: flex;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+
+      .seg button {
+        min-height: 28px;
+        border-right: 1px solid var(--line-soft);
+        background: transparent;
+        color: var(--muted);
+        padding: 0 9px;
+        font-size: 12px;
+        font-weight: 650;
+      }
+
+      .seg button:last-child {
+        border-right: 0;
+      }
+
+      .seg button.active {
+        background: var(--strong-control-bg);
+        color: var(--strong-control-fg);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 18px;
+        height: 16px;
+        margin-left: 5px;
+        border-radius: 999px;
+        background: rgb(127 127 127 / 16%);
+        padding: 0 5px;
+        font-size: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .seg button.active .pill {
+        background: var(--strong-control-pill);
+      }
+
+      .table-wrap {
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+
+      #credential-table-wrap table {
+        min-width: 760px;
+      }
+
+      #event-table-wrap table {
+        min-width: 840px;
+      }
+
+      th,
+      td {
+        min-width: 0;
+        border-bottom: 1px solid var(--line-soft);
+        padding: 10px 12px;
+        text-align: left;
+        vertical-align: top;
+        overflow-wrap: anywhere;
+      }
+
+      td > * {
+        min-width: 0;
+      }
+
+      th {
+        background: var(--surface-2);
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 760;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      tbody tr:hover {
+        background: color-mix(in oklab, var(--surface-2) 62%, var(--surface) 38%);
+      }
+
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .identity {
+        display: flex;
+        min-width: 0;
+        gap: 9px;
+      }
+
+      .avatar {
+        width: 30px;
+        height: 30px;
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--paper-2);
+        color: var(--ink-2);
+        font-size: 11px;
+        font-weight: 760;
+      }
+
+      .id-main {
+        min-width: 0;
+        flex: 1;
+      }
+
+      .id-title {
+        overflow: hidden;
+        font-weight: 720;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .id-sub,
+      .id-string,
+      .id-error {
+        margin-top: 3px;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .id-string {
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 11px;
+      }
+
+      .id-error {
+        color: var(--bad);
+      }
+
+      .credential-error-row td {
+        border-bottom-color: var(--line);
+        padding-top: 8px;
+        padding-bottom: 8px;
+        vertical-align: middle;
+        background: color-mix(in oklab, var(--surface-2) 45%, var(--surface) 55%);
+      }
+
+      .credential-error-row:hover {
+        background: color-mix(in oklab, var(--surface-2) 45%, var(--surface) 55%);
+      }
+
+      .last-error {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        min-height: 24px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .last-error b {
+        flex: 0 0 auto;
+        color: var(--ink-3);
+        font-weight: 720;
+      }
+
+      .last-error span {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .last-error.has-error span {
+        color: var(--bad);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 24px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 0 8px;
+        font-size: 11.5px;
+        font-weight: 720;
+        white-space: nowrap;
+      }
+
+      .badge::before {
+        width: 5px;
+        height: 5px;
+        content: "";
+        border-radius: 999px;
+        background: currentColor;
+      }
+
+      .badge.available,
+      .badge.ok {
+        border-color: color-mix(in oklab, var(--good) 30%, transparent);
+        background: var(--good-soft);
+        color: var(--good);
+      }
+
+      .badge.cooldown,
+      .badge.refresh_due,
+      .badge.expired,
+      .badge.warn {
+        border-color: color-mix(in oklab, var(--warn) 30%, transparent);
+        background: var(--warn-soft);
+        color: var(--warn);
+      }
+
+      .badge.disabled,
+      .badge.invalid,
+      .badge.error {
+        border-color: color-mix(in oklab, var(--bad) 25%, transparent);
+        background: var(--bad-soft);
+        color: var(--bad);
+      }
+
+      .small-muted {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .success-cell {
+        display: grid;
+        gap: 4px;
+        color: var(--ink-2);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .success-rate {
+        font-size: 13px;
+        font-weight: 720;
+      }
+
+      .success-rate.warn {
+        color: var(--warn);
+      }
+
+      .success-rate.bad {
+        color: var(--bad);
+      }
+
+      .quota-cell {
+        display: grid;
+        gap: 5px;
+        color: var(--ink-2);
+        font-size: 11.5px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .quota-line {
+        display: grid;
+        gap: 4px;
+      }
+
+      .quota-line-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .quota-line-head span {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--muted);
+        font-weight: 720;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .quota-line-head b {
+        font-weight: 760;
+        white-space: nowrap;
+      }
+
+      .quota-track {
+        height: 5px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: var(--paper-2);
+      }
+
+      .quota-fill {
+        height: 100%;
+        border-radius: inherit;
+        background: var(--good);
+      }
+
+      .quota-line.warn .quota-fill {
+        background: var(--warn);
+      }
+
+      .quota-line.bad .quota-fill {
+        background: var(--bad);
+      }
+
+      .time-cell {
+        color: var(--ink-2);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .time-cell div {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .time-cell span {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 720;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .time-cell b {
+        min-width: 0;
+        overflow: hidden;
+        font-weight: 650;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .row-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 5px;
+        flex-wrap: wrap;
+      }
+
+      .pager {
+        min-height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border-top: 1px solid var(--line-soft);
+        background: var(--surface-2);
+        padding: 8px 14px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .pager .right {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .pager .right .mono {
+        min-width: 46px;
+        text-align: center;
+        white-space: nowrap;
+      }
+
+      .import-body {
+        display: grid;
+        gap: 10px;
+        padding: 12px 14px 14px;
+      }
+
+      .import-panel {
+        position: sticky;
+        top: 14px;
+        max-height: calc(100vh - 28px);
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+
+      .import-panel .import-body {
+        min-height: 0;
+        overflow: auto;
+      }
+
+      .drop {
+        display: grid;
+        gap: 4px;
+        justify-items: center;
+        border: 1.5px dashed var(--line);
+        border-radius: 8px;
+        background: var(--surface-2);
+        padding: 14px;
+        cursor: pointer;
+        text-align: center;
+      }
+
+      .drop:hover,
+      .drop.over {
+        border-color: var(--accent);
+        background: color-mix(in oklab, var(--accent-soft) 55%, var(--surface-2));
+      }
+
+      .drop b {
+        font-size: 13px;
+      }
+
+      .drop small {
+        color: var(--muted);
+        font-size: 11.5px;
+      }
+
+      .file-input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .file-list {
+        display: grid;
+        gap: 5px;
+      }
+
+      .file-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        border: 1px solid var(--line-soft);
+        border-radius: 6px;
+        background: var(--surface-2);
+        padding: 5px 8px;
+        font-size: 12px;
+      }
+
+      .file-row span:first-child {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .import-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .endpoint-row {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+      }
+
+      .verb {
+        min-width: 42px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--paper-2);
+        color: var(--ink-2);
+        padding: 2px 5px;
+        text-align: center;
+        font-size: 10px;
+        font-weight: 760;
+      }
+
+      .verb.post {
+        border-color: color-mix(in oklab, var(--accent) 25%, transparent);
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .endpoint-path {
+        overflow: hidden;
+        color: var(--ink);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .kv-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        font-size: 12px;
+      }
+
+      .kv-row span {
+        color: var(--muted);
+      }
+
+      .kv-row b {
+        min-width: 0;
+        overflow: hidden;
+        color: var(--ink-2);
+        font-weight: 650;
+        text-align: right;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .event-row {
+        grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+        align-items: start;
+      }
+
+      .event-title,
+      .event-model {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .event-title {
+        font-weight: 700;
+      }
+
+      .event-model,
+      .event-meta {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .event-num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .event-num b {
+        display: block;
+        font-weight: 760;
+      }
+
+      .event-num span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .empty {
+        padding: 30px 14px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .toasts {
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        z-index: 40;
+        display: grid;
+        width: min(360px, calc(100vw - 28px));
+        gap: 8px;
+        pointer-events: none;
+      }
+
+      .toast {
+        pointer-events: auto;
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--accent);
+        border-radius: 8px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        padding: 9px 11px;
+        font-size: 12px;
+      }
+
+      .toast.error {
+        border-left-color: var(--bad);
+      }
+
+      .toast.ok {
+        border-left-color: var(--good);
+      }
+
+      .toast-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 3px;
+      }
+
+      .toast-title {
+        font-weight: 760;
+      }
+
+      .toast-body {
+        color: var(--ink-2);
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      .app {
+        transition: grid-template-columns 0.2s ease;
+      }
+
+      .rail-toggle-icon {
+        display: inline-block;
+        font-size: 14px;
+        line-height: 1;
+        transition: transform 0.2s ease;
+      }
+
+      .app.rail-collapsed {
+        grid-template-columns: 64px minmax(0, 1fr);
+      }
+
+      .app.rail-collapsed .rail {
+        padding: 18px 10px;
+      }
+
+      .app.rail-collapsed .brand {
+        justify-content: center;
+        gap: 0;
+      }
+
+      .app.rail-collapsed .brand-copy {
+        max-width: 0;
+        opacity: 0;
+      }
+
+      .app.rail-collapsed .nav button,
+      .app.rail-collapsed .rail-foot button {
+        gap: 0;
+        padding: 0;
+        justify-content: center;
+      }
+
+      .app.rail-collapsed .side-label {
+        /* 收起态保留文本的语义来源，但把可视宽度归零，图标位置不受文字影响。 */
+        max-width: 0;
+        opacity: 0;
+      }
+
+      .app.rail-collapsed .rail-toggle-icon {
+        font-size: 14px;
+        transform: rotate(180deg);
+      }
+
+      @media (max-width: 1180px) {
+        .stats {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .chart-card {
+          grid-template-columns: 150px minmax(0, 1fr);
+        }
+
+        .dashboard-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .overview-grid,
+        .credentials-grid {
+          grid-template-columns: minmax(0, 1fr) 300px;
+        }
+      }
+
+      @media (max-width: 1400px) {
+        .credentials-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .credentials-grid .import-panel {
+          position: static;
+          max-height: none;
+        }
+      }
+
+      @media (max-width: 980px) {
+        .app {
+          grid-template-columns: 1fr;
+        }
+
+        .rail {
+          position: static;
+          height: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .nav {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .rail-foot {
+          display: none;
+        }
+
+        .connect-panel,
+        .split,
+        .overview-grid,
+        .credentials-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .import-panel {
+          position: static;
+          max-height: none;
+        }
+      }
+
+      @media (max-width: 700px) {
+        .main {
+          padding: 14px 10px 34px;
+        }
+
+        .panel-head,
+        .pager,
+        .import-foot {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .topbar {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: center;
+        }
+
+        .topbar .spacer {
+          display: none;
+        }
+
+        .crumbs {
+          grid-column: 1 / -1;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .panel-head .right,
+        .pager .right {
+          margin-left: 0;
+        }
+
+        .pager .right {
+          width: 100%;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 46px minmax(0, 1fr);
+        }
+
+        .stats,
+        .chart-card {
+          grid-template-columns: 1fr;
+        }
+
+        .conn {
+          width: 100%;
+          min-width: 0;
+        }
+
+        .conn-url {
+          max-width: none;
+        }
+
+        .nav {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .button,
+        .search,
+        select {
+          width: 100%;
+        }
+
+        .usage-head {
+          align-items: center;
+          flex-direction: row;
+          flex-wrap: wrap;
+        }
+
+        .usage-head h2 {
+          flex: 0 0 auto;
+        }
+
+        .panel-head .right.usage-tools {
+          width: 100%;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+        }
+
+        .usage-tools .button {
+          width: auto;
+        }
+
+        .seg {
+          width: 100%;
+          overflow-x: auto;
+        }
+
+        .seg button {
+          flex: 1 0 auto;
+        }
+
+        #credential-filters.seg {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          overflow: hidden;
+        }
+
+        #credential-filters.seg button {
+          min-width: 0;
+          border-right: 1px solid var(--line-soft);
+          border-bottom: 1px solid var(--line-soft);
+          padding-right: 6px;
+          padding-left: 6px;
+        }
+
+        #credential-filters.seg button:nth-child(2n) {
+          border-right: 0;
+        }
+
+        #credential-filters.seg button:nth-last-child(-n + 2) {
+          border-bottom: 0;
+        }
+
+        .row-actions {
+          justify-content: flex-start;
+        }
+
+        #credential-table-wrap,
+        #event-table-wrap {
+          overflow: visible;
+        }
+
+        #credential-table-wrap table,
+        #credential-table-wrap thead,
+        #credential-table-wrap tbody,
+        #credential-table-wrap tr,
+        #credential-table-wrap td,
+        #event-table-wrap table,
+        #event-table-wrap thead,
+        #event-table-wrap tbody,
+        #event-table-wrap tr,
+        #event-table-wrap td {
+          display: block;
+          width: 100%;
+          min-width: 0;
+        }
+
+        #credential-table-wrap colgroup,
+        #credential-table-wrap thead,
+        #event-table-wrap colgroup,
+        #event-table-wrap thead {
+          display: none;
+        }
+
+        #credential-table-wrap tbody,
+        #event-table-wrap tbody {
+          padding: 10px;
+        }
+
+        #credential-table-wrap tbody tr:not(.credential-error-row),
+        #event-table-wrap tbody tr {
+          overflow: hidden;
+          border: 1px solid var(--line);
+          border-radius: 8px;
+          background: var(--surface);
+        }
+
+        #credential-table-wrap tbody tr:not(.credential-error-row) {
+          border-bottom-right-radius: 0;
+          border-bottom-left-radius: 0;
+        }
+
+        #credential-table-wrap tbody tr + tr:not(.credential-error-row),
+        #event-table-wrap tbody tr + tr {
+          margin-top: 10px;
+        }
+
+        #credential-table-wrap tbody tr:not(.credential-error-row) td,
+        #event-table-wrap tbody tr td {
+          display: grid;
+          grid-template-columns: 74px minmax(0, 1fr);
+          gap: 8px;
+          align-items: start;
+          border-bottom: 1px solid var(--line-soft);
+          padding: 9px 11px;
+        }
+
+        #credential-table-wrap tbody tr:not(.credential-error-row) td::before,
+        #event-table-wrap tbody tr td::before {
+          content: attr(data-label);
+          color: var(--muted);
+          font-size: 11px;
+          font-weight: 720;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        }
+
+        #credential-table-wrap tbody tr:not(.credential-error-row) td:first-child {
+          display: block;
+          padding: 11px;
+        }
+
+        #credential-table-wrap tbody tr:not(.credential-error-row) td:first-child::before,
+        #credential-table-wrap .credential-error-row td::before {
+          content: none;
+        }
+
+        #credential-table-wrap tbody tr:not(.credential-error-row) td:last-child,
+        #event-table-wrap tbody tr td:last-child {
+          border-bottom: 0;
+        }
+
+        #credential-table-wrap .credential-error-row {
+          overflow: hidden;
+          border: 1px solid var(--line);
+          border-top: 0;
+          border-radius: 0 0 8px 8px;
+          background: color-mix(in oklab, var(--surface-2) 45%, var(--surface) 55%);
+          margin-bottom: 10px;
+        }
+
+        #credential-table-wrap .credential-error-row td {
+          display: block;
+          border-bottom: 0;
+          background: transparent;
+          padding: 9px 11px 10px;
+        }
+
+        #credential-table-wrap .last-error {
+          align-items: flex-start;
+        }
+
+        #credential-table-wrap .row-actions {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 6px;
+        }
+
+        #credential-table-wrap .row-actions .button {
+          min-width: 0;
+          padding-right: 6px;
+          padding-left: 6px;
+        }
+
+        #credential-table-wrap .quota-line-head {
+          gap: 6px;
+        }
+
+        #event-table-wrap td .badge {
+          width: fit-content;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="rail">
+        <div class="brand">
+          <div class="mark mono">cx</div>
+          <div class="brand-copy">
+            <b>Codex Proxy</b>
+            <small>Admin console</small>
+          </div>
+        </div>
+        <nav class="nav" aria-label="主导航">
+          <button class="active" type="button" data-view-target="overview" aria-label="总览">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 7.5 8 3l5.5 4.5v5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+            <span class="side-label">总览</span>
+          </button>
+          <button type="button" data-view-target="credentials" aria-label="凭据池">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="5" cy="10.5" r="2.8" stroke="currentColor" stroke-width="1.4"/><path d="M7.3 8.7 13.2 2.8M10.3 5.7l1.8 1.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <span class="side-label">凭据池</span>
+          </button>
+          <button type="button" data-view-target="usage" aria-label="用量">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 12.5h12M3.5 10V6.5M8 10V3.5M12.5 10V8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <span class="side-label">用量</span>
+          </button>
+          <button type="button" data-view-target="endpoints" aria-label="接口">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 8h3M10.5 8h3M6 11l2-6M10 11 8 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            <span class="side-label">接口</span>
+          </button>
+        </nav>
+        <div class="rail-foot">
+          <button type="button" id="theme-button" aria-label="切换主题">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M12.8 9.7A5 5 0 0 1 6.3 3.2a5.4 5.4 0 1 0 6.5 6.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+            <span class="side-label">切换主题</span>
+          </button>
+          <button type="button" id="rail-toggle-button" aria-label="收起侧栏" title="收起">
+            <span class="rail-toggle-icon" aria-hidden="true">‹</span>
+            <span class="side-label" id="rail-toggle-label">收起</span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="crumbs">Console <span>/</span> <b id="crumb-current">总览</b></div>
+          <div class="spacer"></div>
+          <div class="conn" id="connection-pill">
+            <span class="conn-dot"></span>
+            <span id="connection-text">未连接</span>
+            <span class="conn-url mono" id="connection-url"></span>
+          </div>
+          <button class="icon-button" id="reload-button" type="button" title="刷新数据" aria-label="刷新数据">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8a5 5 0 0 1 8.6-3.4M13 8a5 5 0 0 1-8.6 3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M11.6 2.4v2.5H9.1M4.4 13.6v-2.5h2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </header>
+
+        <section class="connect-panel" aria-label="连接管理接口">
+          <div>
+            <label for="base-url">服务地址</label>
+            <input class="mono" id="base-url" autocomplete="off" spellcheck="false" placeholder="https://your-project.vercel.app" />
+          </div>
+          <div>
+            <label for="admin-token">ADMIN_TOKEN</label>
+            <input id="admin-token" type="password" autocomplete="off" spellcheck="false" placeholder="ADMIN_TOKEN" />
+          </div>
+          <button class="button primary" id="connect-button" type="button">连接</button>
+          <button class="button ghost" id="forget-button" type="button">清除</button>
+          <div class="notice" id="notice">等待连接</div>
+        </section>
+
+        <section class="stats" aria-label="核心指标">
+          <div class="stat">
+            <div class="label">请求数</div>
+            <div class="value mono" id="stat-requests">0</div>
+            <div class="foot" id="stat-range">最近 24 小时</div>
+          </div>
+          <div class="stat good">
+            <div class="label">总 Tokens</div>
+            <div class="value mono" id="stat-tokens">0</div>
+            <div class="foot">input + output</div>
+          </div>
+          <div class="stat">
+            <div class="label">缓存 Tokens</div>
+            <div class="value mono" id="stat-cached">0</div>
+            <div class="foot" id="stat-cache-rate">0%</div>
+          </div>
+          <div class="stat warn">
+            <div class="label">思考 Tokens</div>
+            <div class="value mono" id="stat-reasoning">0</div>
+            <div class="foot" id="stat-reasoning-rate">0%</div>
+          </div>
+          <div class="stat">
+            <div class="label">可用凭据</div>
+            <div class="value mono" id="stat-available">0</div>
+            <div class="foot" id="stat-credential-total">0 total</div>
+          </div>
+          <div class="stat bad">
+            <div class="label">错误率</div>
+            <div class="value mono" id="stat-error-rate">0%</div>
+            <div class="foot" id="stat-latency">avg 0 ms</div>
+          </div>
+        </section>
+
+        <section class="view active" id="view-overview">
+          <div class="dashboard-grid overview-grid">
+            <section class="panel overview-usage-card">
+              <header class="panel-head usage-head">
+                <h2>用量走势</h2>
+                <div class="right usage-tools">
+                  <div class="range-seg" id="usage-range" role="group" aria-label="用量时间范围">
+                    <button type="button" data-usage-range="24h">24h</button>
+                    <button type="button" data-usage-range="7d">7d</button>
+                    <button type="button" data-usage-range="30d">30d</button>
+                  </div>
+                  <button class="button sm" id="usage-refresh-button" type="button">
+                    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8a5 5 0 0 1 8.6-3.4M13 8a5 5 0 0 1-8.6 3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M11.6 2.4v2.5H9.1M4.4 13.6v-2.5h2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    刷新
+                  </button>
+                </div>
+              </header>
+              <div class="chart-card">
+                <div class="chart-total">
+                  <div class="label">请求总数</div>
+                  <div class="value mono" id="chart-total">0</div>
+                  <div class="small-muted" id="chart-caption">等待用量数据</div>
+                </div>
+                <div class="chart-plot" id="chart-plot">
+                  <svg class="chart" id="usage-chart" viewBox="0 0 100 64" preserveAspectRatio="none" aria-label="用量条形图"></svg>
+                  <div class="chart-tooltip hidden" id="chart-tooltip"></div>
+                </div>
+                <div class="chart-legend" aria-hidden="true">
+                  <span><i style="background: var(--chart-request); border-radius: 999px;"></i>请求数</span>
+                  <span><i style="background: var(--good);"></i>输入 Token</span>
+                  <span><i style="background: var(--warn);"></i>输出 Token</span>
+                  <span><i style="background: #a66fed;"></i>思考 Token</span>
+                  <span><i style="background: #7eb9e8;"></i>缓存 Token</span>
+                </div>
+              </div>
+            </section>
+
+            <aside class="panel">
+              <header class="panel-head">
+                <h2>模型用量</h2>
+                <span class="meta">按 tokens 排序</span>
+              </header>
+              <div class="list" id="model-rank"></div>
+              <div class="pager" id="model-rank-pager">
+                <span id="model-rank-page-info">0 项</span>
+                <div class="right">
+                  <button class="button sm" id="model-rank-prev" type="button">上一页</button>
+                  <span class="mono" id="model-rank-page-state">1 / 1</span>
+                  <button class="button sm" id="model-rank-next" type="button">下一页</button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-credentials">
+          <div class="dashboard-grid credentials-grid">
+            <section class="panel">
+              <header class="panel-head">
+                <h2>凭据池</h2>
+                <span class="meta" id="credentials-meta">0 条</span>
+                <div class="right">
+                  <button class="button sm" id="refresh-credentials-button" type="button">
+                    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8a5 5 0 0 1 8.6-3.4M13 8a5 5 0 0 1-8.6 3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M11.6 2.4v2.5H9.1M4.4 13.6v-2.5h2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    刷新凭据
+                  </button>
+                </div>
+              </header>
+              <div class="toolbar">
+                <div class="search">
+                  <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.2" stroke="currentColor" stroke-width="1.4"/><path d="m10.2 10.2 3.3 3.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                  <input id="credential-search" type="search" placeholder="搜索 label / email / id / error" />
+                </div>
+                <div class="seg" id="credential-filters" aria-label="凭据状态筛选"></div>
+              </div>
+              <div class="table-wrap" id="credential-table-wrap">
+                <table>
+                  <colgroup>
+                    <col style="width: 28%" />
+                    <col style="width: 11%" />
+                    <col style="width: 10%" />
+                    <col style="width: 19%" />
+                    <col style="width: 17%" />
+                    <col style="width: 15%" />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th>身份</th>
+                      <th>状态</th>
+                      <th>成功率</th>
+                      <th>额度</th>
+                      <th>生命周期</th>
+                      <th style="text-align: right">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="credentials-body"></tbody>
+                </table>
+              </div>
+              <div class="empty hidden" id="credentials-empty">暂无匹配凭据</div>
+              <div class="pager" id="credentials-pager">
+                <span id="credentials-page-info">0 条</span>
+                <div class="right">
+                  <button class="button sm" id="credentials-prev" type="button">上一页</button>
+                  <span class="mono" id="credentials-page-state">1 / 1</span>
+                  <button class="button sm" id="credentials-next" type="button">下一页</button>
+                </div>
+              </div>
+            </section>
+
+            <aside class="panel import-panel">
+              <header class="panel-head">
+                <h2>导入</h2>
+                <span class="meta">Codex token JSON</span>
+              </header>
+              <div class="import-body">
+                <div class="drop" id="drop-zone">
+                  <b>拖入或选择 Codex token JSON</b>
+                  <small>Files · pasted JSON</small>
+                  <input class="file-input" id="credential-files" type="file" accept="application/json,.json" multiple />
+                </div>
+                <div class="file-list" id="file-list"></div>
+                <textarea class="mono" id="credential-json" spellcheck="false" placeholder='{"access_token":"...","refresh_token":"...","id_token":"...","account_id":"...","email":"...","expired":"2026-05-11T10:00:00Z","last_refresh":"2026-05-11T02:00:00Z","type":"Bearer"}'></textarea>
+                <div class="import-foot">
+                  <span class="small-muted" id="import-count">没有待导入内容</span>
+                  <div class="row-actions">
+                    <button class="button sm" id="import-clear-button" type="button">清空</button>
+                    <button class="button sm primary" id="import-button" type="button">
+                      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 11V2.8M4.8 6 8 2.8 11.2 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 10.5v2.2a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                      导入
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-usage">
+          <div class="split">
+            <section class="panel">
+              <header class="panel-head">
+                <h2>凭据维度</h2>
+              </header>
+              <div class="list" id="credential-rank"></div>
+              <div class="pager" id="credential-rank-pager">
+                <span id="credential-rank-page-info">0 项</span>
+                <div class="right">
+                  <button class="button sm" id="credential-rank-prev" type="button">上一页</button>
+                  <span class="mono" id="credential-rank-page-state">1 / 1</span>
+                  <button class="button sm" id="credential-rank-next" type="button">下一页</button>
+                </div>
+              </div>
+            </section>
+            <section class="panel">
+              <header class="panel-head">
+                <h2>访问 KEY 用量</h2>
+              </header>
+              <div class="list" id="client-rank"></div>
+              <div class="pager" id="client-rank-pager">
+                <span id="client-rank-page-info">0 项</span>
+                <div class="right">
+                  <button class="button sm" id="client-rank-prev" type="button">上一页</button>
+                  <span class="mono" id="client-rank-page-state">1 / 1</span>
+                  <button class="button sm" id="client-rank-next" type="button">下一页</button>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel">
+            <header class="panel-head">
+              <h2>请求明细</h2>
+              <span class="meta" id="event-table-meta">0 条</span>
+            </header>
+            <div class="table-wrap" id="event-table-wrap">
+              <table>
+                <colgroup>
+                  <col style="width: 12%" />
+                  <col style="width: 12%" />
+                  <col style="width: 23%" />
+                  <col style="width: 12%" />
+                  <col style="width: 12%" />
+                  <col style="width: 12%" />
+                  <col style="width: 17%" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>模型</th>
+                    <th>接口</th>
+                    <th>状态</th>
+                    <th>耗时</th>
+                    <th>Tokens</th>
+                    <th>凭据</th>
+                  </tr>
+                </thead>
+                <tbody id="events-body"></tbody>
+              </table>
+            </div>
+            <div class="empty hidden" id="events-empty">暂无请求明细</div>
+            <div class="pager" id="events-pager">
+              <span id="events-page-info">0 条</span>
+              <div class="right">
+                <button class="button sm" id="events-prev" type="button">上一页</button>
+                <span class="mono" id="events-page-state">1 / 1</span>
+                <button class="button sm" id="events-next" type="button">下一页</button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="view-endpoints">
+          <div class="split">
+            <section class="panel">
+              <header class="panel-head">
+                <h2>代理接口</h2>
+              </header>
+              <div class="list" id="endpoint-list"></div>
+            </section>
+            <section class="panel">
+              <header class="panel-head">
+                <h2>连接状态</h2>
+              </header>
+              <div class="list">
+                <div class="kv-row"><span>服务地址</span><b class="mono" id="kv-base-url">-</b></div>
+                <div class="kv-row"><span>连接状态</span><b id="kv-state">未连接</b></div>
+                <div class="kv-row"><span>最近同步</span><b id="kv-updated">-</b></div>
+                <div class="kv-row"><span>用量范围</span><b id="kv-range">24 小时</b></div>
+                <div class="kv-row"><span>事件上限</span><b>120</b></div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+
+    <script>
+      // 这些映射只影响管理端展示，接口仍然使用后端返回的原始状态值。
+      const STATUS_TEXT = {
+        available: "可用",
+        disabled: "已禁用",
+        cooldown: "冷却中",
+        expired: "已过期",
+        refresh_due: "待刷新",
+        invalid: "无效",
+      };
+
+      const RANGE_TEXT = {
+        "24h": "24 小时",
+        "7d": "7 天",
+        "30d": "30 天",
+      };
+      const RANGE_BUCKETS = {
+        "24h": { count: 24, unit: "hour", label: "按小时分段" },
+        "7d": { count: 7, unit: "day", label: "按每日分段" },
+        "30d": { count: 30, unit: "day", label: "按每日分段" },
+      };
+      const HOUR_MS = 60 * 60 * 1000;
+
+      const ENDPOINTS = [
+        ["GET", "/v1/models"],
+        ["POST", "/v1/responses"],
+        ["POST", "/v1/chat/completions"],
+        ["GET", "/admin/health"],
+        ["GET", "/admin/usage/summary"],
+        ["GET", "/admin/usage/events"],
+        ["POST", "/admin/credentials/import"],
+        ["POST", "/admin/credentials/refresh"],
+      ];
+
+      const state = {
+        baseUrl: window.location.origin,
+        // 管理令牌只保存在当前页面运行时内存，避免 localStorage 泄露长期可用的管理权限。
+        adminToken: "",
+        connected: false,
+        busy: false,
+        view: "overview",
+        themeIndex: 0,
+        lastUpdated: "",
+        credentials: [],
+        credentialFilter: "all",
+        credentialPage: 1,
+        credentialPageSize: 12,
+        // 各列表分页只裁切当前展示窗口，避免一次性生成过多 DOM 节点影响控制台响应。
+        eventTablePage: 1,
+        eventTablePageSize: 20,
+        modelRankPage: 1,
+        rankPageSize: 8,
+        credentialRankPage: 1,
+        clientRankPage: 1,
+        usageRange: "24h",
+        usageWindow: usageRangeParams("24h"),
+        usageSummary: emptyUsageSummary(),
+        usageEvents: [],
+        usageChartRows: [],
+        selectedFiles: [],
+        toastSeq: 0,
+      };
+
+      const nodes = {
+        baseUrl: document.querySelector("#base-url"),
+        adminToken: document.querySelector("#admin-token"),
+        notice: document.querySelector("#notice"),
+        connectButton: document.querySelector("#connect-button"),
+        forgetButton: document.querySelector("#forget-button"),
+        reloadButton: document.querySelector("#reload-button"),
+        themeButton: document.querySelector("#theme-button"),
+        connectionPill: document.querySelector("#connection-pill"),
+        connectionText: document.querySelector("#connection-text"),
+        connectionUrl: document.querySelector("#connection-url"),
+        crumbCurrent: document.querySelector("#crumb-current"),
+        navButtons: document.querySelectorAll("[data-view-target]"),
+        views: document.querySelectorAll(".view"),
+        toasts: document.querySelector("#toasts"),
+        statRequests: document.querySelector("#stat-requests"),
+        statTokens: document.querySelector("#stat-tokens"),
+        statCached: document.querySelector("#stat-cached"),
+        statReasoning: document.querySelector("#stat-reasoning"),
+        statRange: document.querySelector("#stat-range"),
+        statCacheRate: document.querySelector("#stat-cache-rate"),
+        statReasoningRate: document.querySelector("#stat-reasoning-rate"),
+        statAvailable: document.querySelector("#stat-available"),
+        statCredentialTotal: document.querySelector("#stat-credential-total"),
+        statErrorRate: document.querySelector("#stat-error-rate"),
+        statLatency: document.querySelector("#stat-latency"),
+        chartTotal: document.querySelector("#chart-total"),
+        chartCaption: document.querySelector("#chart-caption"),
+        chartPlot: document.querySelector("#chart-plot"),
+        chartTooltip: document.querySelector("#chart-tooltip"),
+        usageChart: document.querySelector("#usage-chart"),
+        usageRange: document.querySelector("#usage-range"),
+        usageRangeButtons: document.querySelectorAll("[data-usage-range]"),
+        usageRefreshButton: document.querySelector("#usage-refresh-button"),
+        modelRank: document.querySelector("#model-rank"),
+        modelRankPager: document.querySelector("#model-rank-pager"),
+        modelRankPageInfo: document.querySelector("#model-rank-page-info"),
+        modelRankPageState: document.querySelector("#model-rank-page-state"),
+        modelRankPrev: document.querySelector("#model-rank-prev"),
+        modelRankNext: document.querySelector("#model-rank-next"),
+        credentialRank: document.querySelector("#credential-rank"),
+        credentialRankPager: document.querySelector("#credential-rank-pager"),
+        credentialRankPageInfo: document.querySelector("#credential-rank-page-info"),
+        credentialRankPageState: document.querySelector("#credential-rank-page-state"),
+        credentialRankPrev: document.querySelector("#credential-rank-prev"),
+        credentialRankNext: document.querySelector("#credential-rank-next"),
+        clientRank: document.querySelector("#client-rank"),
+        clientRankPager: document.querySelector("#client-rank-pager"),
+        clientRankPageInfo: document.querySelector("#client-rank-page-info"),
+        clientRankPageState: document.querySelector("#client-rank-page-state"),
+        clientRankPrev: document.querySelector("#client-rank-prev"),
+        clientRankNext: document.querySelector("#client-rank-next"),
+        eventTableMeta: document.querySelector("#event-table-meta"),
+        eventsBody: document.querySelector("#events-body"),
+        eventTableWrap: document.querySelector("#event-table-wrap"),
+        eventsEmpty: document.querySelector("#events-empty"),
+        eventsPager: document.querySelector("#events-pager"),
+        eventsPageInfo: document.querySelector("#events-page-info"),
+        eventsPageState: document.querySelector("#events-page-state"),
+        eventsPrev: document.querySelector("#events-prev"),
+        eventsNext: document.querySelector("#events-next"),
+        credentialsMeta: document.querySelector("#credentials-meta"),
+        credentialSearch: document.querySelector("#credential-search"),
+        credentialFilters: document.querySelector("#credential-filters"),
+        credentialsBody: document.querySelector("#credentials-body"),
+        credentialTableWrap: document.querySelector("#credential-table-wrap"),
+        credentialsEmpty: document.querySelector("#credentials-empty"),
+        credentialsPager: document.querySelector("#credentials-pager"),
+        credentialsPageInfo: document.querySelector("#credentials-page-info"),
+        credentialsPageState: document.querySelector("#credentials-page-state"),
+        credentialsPrev: document.querySelector("#credentials-prev"),
+        credentialsNext: document.querySelector("#credentials-next"),
+        refreshCredentialsButton: document.querySelector("#refresh-credentials-button"),
+        dropZone: document.querySelector("#drop-zone"),
+        credentialFiles: document.querySelector("#credential-files"),
+        fileList: document.querySelector("#file-list"),
+        credentialJson: document.querySelector("#credential-json"),
+        importCount: document.querySelector("#import-count"),
+        importClearButton: document.querySelector("#import-clear-button"),
+        importButton: document.querySelector("#import-button"),
+        endpointList: document.querySelector("#endpoint-list"),
+        kvBaseUrl: document.querySelector("#kv-base-url"),
+        kvState: document.querySelector("#kv-state"),
+        kvUpdated: document.querySelector("#kv-updated"),
+        kvRange: document.querySelector("#kv-range"),
+        app: document.querySelector(".app"),
+        railToggleButton: document.querySelector("#rail-toggle-button"),
+        railToggleLabel: document.querySelector("#rail-toggle-label"),
+      };
+
+      nodes.baseUrl.value = state.baseUrl;
+      render();
+      bindEvents();
+      restoreRailCollapsed();
+
+      function bindEvents() {
+        nodes.connectButton.addEventListener("click", () => loadAll({ readToken: true }));
+        nodes.reloadButton.addEventListener("click", () => loadAll({ readToken: false }));
+        nodes.usageRefreshButton.addEventListener("click", () => loadUsage());
+        nodes.refreshCredentialsButton.addEventListener("click", refreshCredentials);
+        nodes.forgetButton.addEventListener("click", forgetConnection);
+        nodes.themeButton.addEventListener("click", cycleTheme);
+        nodes.railToggleButton.addEventListener("click", toggleRail);
+        nodes.usageChart.addEventListener("mousemove", showChartTooltip);
+        nodes.usageChart.addEventListener("mouseleave", hideChartTooltip);
+        nodes.usageRange.addEventListener("click", (event) => {
+          const button = event.target.closest("[data-usage-range]");
+          if (!button || button.disabled) return;
+          state.usageRange = button.dataset.usageRange;
+          state.usageWindow = usageRangeParams(state.usageRange);
+          resetUsagePagination();
+          loadUsage();
+          render();
+        });
+        nodes.credentialSearch.addEventListener("input", () => {
+          state.credentialPage = 1;
+          renderCredentials();
+        });
+        nodes.credentialsPrev.addEventListener("click", () => {
+          state.credentialPage -= 1;
+          renderCredentials();
+        });
+        nodes.credentialsNext.addEventListener("click", () => {
+          state.credentialPage += 1;
+          renderCredentials();
+        });
+        bindPager(nodes.eventsPrev, "eventTablePage", renderEventsTable, -1);
+        bindPager(nodes.eventsNext, "eventTablePage", renderEventsTable, 1);
+        bindPager(nodes.modelRankPrev, "modelRankPage", renderRanks, -1);
+        bindPager(nodes.modelRankNext, "modelRankPage", renderRanks, 1);
+        bindPager(nodes.credentialRankPrev, "credentialRankPage", renderRanks, -1);
+        bindPager(nodes.credentialRankNext, "credentialRankPage", renderRanks, 1);
+        bindPager(nodes.clientRankPrev, "clientRankPage", renderRanks, -1);
+        bindPager(nodes.clientRankNext, "clientRankPage", renderRanks, 1);
+        nodes.credentialFilters.addEventListener("click", (event) => {
+          const button = event.target.closest("button[data-filter]");
+          if (!button) return;
+          state.credentialFilter = button.dataset.filter;
+          state.credentialPage = 1;
+          renderCredentials();
+        });
+        nodes.credentialsBody.addEventListener("click", (event) => {
+          const button = event.target.closest("button[data-action]");
+          if (!button) return;
+          runCredentialAction(button.dataset.id, button.dataset.action);
+        });
+        nodes.navButtons.forEach((button) => {
+          button.addEventListener("click", () => {
+            setView(button.dataset.viewTarget);
+          });
+        });
+        nodes.dropZone.addEventListener("click", () => nodes.credentialFiles.click());
+        nodes.dropZone.addEventListener("dragover", (event) => {
+          event.preventDefault();
+          nodes.dropZone.classList.add("over");
+        });
+        nodes.dropZone.addEventListener("dragleave", () => nodes.dropZone.classList.remove("over"));
+        nodes.dropZone.addEventListener("drop", (event) => {
+          event.preventDefault();
+          nodes.dropZone.classList.remove("over");
+          state.selectedFiles = Array.from(event.dataTransfer.files || []);
+          renderImport();
+        });
+        nodes.credentialFiles.addEventListener("change", () => {
+          state.selectedFiles = Array.from(nodes.credentialFiles.files || []);
+          renderImport();
+        });
+        nodes.credentialJson.addEventListener("input", renderImport);
+        nodes.importClearButton.addEventListener("click", clearImport);
+        nodes.importButton.addEventListener("click", importCredentials);
+      }
+
+      function bindPager(button, pageKey, renderFn, delta) {
+        button.addEventListener("click", () => {
+          state[pageKey] += delta;
+          renderFn();
+          syncBusy();
+        });
+      }
+
+      async function loadAll({ readToken }) {
+        state.baseUrl = normalizedBaseUrl();
+        if (readToken) {
+          const token = nodes.adminToken.value.trim();
+          if (token) state.adminToken = token;
+        }
+        resetAllPagination();
+        setBusy(true);
+        try {
+          // 认证检查放在 try 内，保证缺少令牌时也能通过页面提示反馈给用户。
+          requireAdminToken();
+          await Promise.all([loadHealthInner(), loadUsageInner()]);
+          state.connected = true;
+          state.lastUpdated = formatDate(new Date().toISOString());
+          nodes.adminToken.value = "";
+          setNotice(`已同步 ${state.credentials.length} 条凭据和 ${state.usageEvents.length} 条请求`, "ok");
+          toast("同步完成", `服务地址 ${hostLabel(state.baseUrl)}`, "ok");
+        } catch (error) {
+          state.connected = false;
+          setNotice("连接失败", "error");
+          toast("连接失败", errorMessage(error), "error");
+        } finally {
+          setBusy(false);
+          render();
+        }
+      }
+
+      async function loadUsage() {
+        state.baseUrl = normalizedBaseUrl();
+        setBusy(true);
+        try {
+          requireAdminToken();
+          await loadUsageInner();
+          state.connected = true;
+          state.lastUpdated = formatDate(new Date().toISOString());
+          setNotice(`已更新 ${RANGE_TEXT[state.usageRange]} 用量`, "ok");
+        } catch (error) {
+          setNotice("用量更新失败", "error");
+          toast("用量更新失败", errorMessage(error), "error");
+        } finally {
+          setBusy(false);
+          render();
+        }
+      }
+
+      async function loadHealthInner() {
+        const health = await requestAdmin("/admin/health");
+        state.credentials = Array.isArray(health.credentials) ? health.credentials : [];
+      }
+
+      async function loadUsageInner() {
+        const range = usageRangeParams();
+        state.usageWindow = range;
+        const query = `from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
+        const [summary, events] = await Promise.all([
+          requestAdmin(`/admin/usage/summary?${query}`),
+          requestAdmin(`/admin/usage/events?${query}&limit=120`),
+        ]);
+        state.usageSummary = normalizeUsageSummary(summary);
+        state.usageEvents = Array.isArray(events.data) ? events.data : [];
+      }
+
+      async function refreshCredentials() {
+        setBusy(true);
+        try {
+          requireAdminToken();
+          const result = await requestAdmin("/admin/credentials/refresh", { method: "POST" });
+          await loadHealthInner();
+          const rateLimits = result.rateLimits;
+          setNotice(`Token 刷新 ${result.refreshed}/${result.checked} 条，额度刷新 ${rateLimits.refreshed}/${rateLimits.checked} 条，失败 ${result.failed + rateLimits.failed} 条`, "ok");
+        } catch (error) {
+          setNotice("刷新凭据失败", "error");
+          toast("刷新凭据失败", errorMessage(error), "error");
+        } finally {
+          setBusy(false);
+          render();
+        }
+      }
+
+      async function runCredentialAction(id, action) {
+        setBusy(true);
+        try {
+          requireAdminToken();
+          if (action === "delete" && !window.confirm("确认删除这条凭据？")) {
+            return;
+          }
+          const encoded = encodeURIComponent(id);
+          if (action === "delete") {
+            await requestAdmin(`/admin/credentials/${encoded}`, { method: "DELETE" });
+          } else {
+            await requestAdmin(`/admin/credentials/${encoded}/${action}`, { method: "POST" });
+          }
+          await loadHealthInner();
+          setNotice("凭据操作已完成", "ok");
+        } catch (error) {
+          setNotice("凭据操作失败", "error");
+          toast("凭据操作失败", errorMessage(error), "error");
+        } finally {
+          setBusy(false);
+          render();
+        }
+      }
+
+      async function importCredentials() {
+        setBusy(true);
+        try {
+          requireAdminToken();
+          const payload = await readImportPayload();
+          const result = await requestAdmin("/admin/credentials/import", {
+            method: "POST",
+            body: payload,
+          });
+          const count = Array.isArray(result.data) ? result.data.length : result.id || result.data ? 1 : 0;
+          clearImport();
+          await loadHealthInner();
+          setNotice(`已导入 ${count} 条凭据`, "ok");
+        } catch (error) {
+          setNotice("导入失败", "error");
+          toast("导入失败", errorMessage(error), "error");
+        } finally {
+          setBusy(false);
+          render();
+        }
+      }
+
+      async function requestAdmin(path, options = {}) {
+        const headers = new Headers();
+        headers.set("Authorization", `Bearer ${state.adminToken}`);
+        if (options.body !== undefined) {
+          headers.set("Content-Type", "application/json");
+        }
+        const response = await fetch(`${state.baseUrl}${path}`, {
+          method: options.method || "GET",
+          headers,
+          body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        });
+        const text = await response.text();
+        const data = parseResponseBody(response, text);
+        if (!response.ok) {
+          throw new Error(responseErrorMessage(response, data, text));
+        }
+        return data;
+      }
+
+      function parseResponseBody(response, text) {
+        if (!text) return null;
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error(`HTTP ${response.status}: 管理接口未返回 JSON`);
+        }
+        return JSON.parse(text);
+      }
+
+      function responseErrorMessage(response, data, text) {
+        if (data?.error?.message) return data.error.message;
+        const compact = text.replace(/\s+/g, " ").trim();
+        return compact ? `HTTP ${response.status}: ${compact.slice(0, 260)}` : `HTTP ${response.status}`;
+      }
+
+      async function readImportPayload() {
+        const values = [];
+        const pasted = nodes.credentialJson.value.trim();
+        if (pasted) {
+          values.push(JSON.parse(pasted));
+        }
+        for (const file of state.selectedFiles) {
+          values.push(JSON.parse(await file.text()));
+        }
+        const flattened = values.flatMap((item) => (Array.isArray(item) ? item : [item]));
+        if (flattened.length === 0) {
+          throw new Error("请输入或选择凭据 JSON");
+        }
+        return flattened.length === 1 ? flattened[0] : flattened;
+      }
+
+      function render() {
+        renderConnection();
+        renderStats();
+        renderChart();
+        renderEvents();
+        renderRanks();
+        renderCredentials();
+        renderImport();
+        renderEndpoints();
+        syncBusy();
+      }
+
+      function renderConnection() {
+        nodes.connectionPill.classList.toggle("ready", state.connected);
+        nodes.connectionText.textContent = state.connected ? "已连接" : "未连接";
+        nodes.connectionUrl.textContent = state.baseUrl ? `· ${hostLabel(state.baseUrl)}` : "";
+        nodes.kvBaseUrl.textContent = state.baseUrl || "-";
+        nodes.kvState.textContent = state.connected ? "已连接" : "未连接";
+        nodes.kvUpdated.textContent = state.lastUpdated || "-";
+        nodes.kvRange.textContent = RANGE_TEXT[state.usageRange];
+        nodes.statRange.textContent = `最近 ${RANGE_TEXT[state.usageRange]}`;
+        renderUsageRangeControls();
+      }
+
+      function renderUsageRangeControls() {
+        nodes.usageRangeButtons.forEach((button) => {
+          button.classList.toggle("active", button.dataset.usageRange === state.usageRange);
+          button.setAttribute("aria-pressed", button.dataset.usageRange === state.usageRange ? "true" : "false");
+        });
+      }
+
+      function renderStats() {
+        const total = state.usageSummary.total;
+        const requestCount = total.requestCount || 0;
+        const cacheRate = rate(total.cachedTokens, total.inputTokens);
+        const reasoningRate = rate(total.reasoningTokens, total.outputTokens);
+        const eventStats = usageEventStats();
+        const credentialCounts = credentialStatusCounts();
+
+        nodes.statRequests.textContent = formatNumber(requestCount);
+        nodes.statTokens.textContent = formatNumber(total.totalTokens || 0);
+        nodes.statCached.textContent = formatNumber(total.cachedTokens || 0);
+        nodes.statReasoning.textContent = formatNumber(total.reasoningTokens || 0);
+        nodes.statCacheRate.textContent = `${cacheRate}% of input`;
+        nodes.statReasoningRate.textContent = `${reasoningRate}% of output`;
+        nodes.statAvailable.textContent = formatNumber(credentialCounts.available);
+        nodes.statCredentialTotal.textContent = `${formatNumber(credentialCounts.total)} total`;
+        nodes.statErrorRate.textContent = `${eventStats.errorRate}%`;
+        nodes.statLatency.textContent = `avg ${formatDuration(eventStats.avgDuration)}`;
+      }
+
+      function renderChart() {
+        // 先按当前范围补齐缺失时段，再绘制图表，避免没有请求的小时/日期在图上消失。
+        const rows = usageChartBuckets();
+        state.usageChartRows = rows;
+        nodes.usageChart.textContent = "";
+        nodes.chartTotal.textContent = formatNumber(state.usageSummary.total.requestCount || 0);
+        nodes.chartCaption.textContent = `最近 ${RANGE_TEXT[state.usageRange]} · ${RANGE_BUCKETS[state.usageRange].label}`;
+        renderBarChart(rows);
+      }
+
+      function usageChartBuckets() {
+        const config = RANGE_BUCKETS[state.usageRange] ?? RANGE_BUCKETS["24h"];
+        const range = state.usageWindow ?? usageRangeParams();
+        const from = Date.parse(range.from);
+        if (!Number.isFinite(from)) {
+          return [];
+        }
+        const starts = config.unit === "day"
+          ? dayBucketStarts(from, config.count)
+          : hourBucketStarts(from, config.count);
+        const buckets = new Map();
+        for (const start of starts) {
+          buckets.set(start, emptyBucket(start, config.unit));
+        }
+        for (const row of state.usageSummary.byHour) {
+          const rowTime = Date.parse(row.hourStart);
+          if (!Number.isFinite(rowTime)) {
+            continue;
+          }
+          const key = config.unit === "day" ? floorLocalDay(rowTime) : floorHour(rowTime);
+          const bucket = buckets.get(key);
+          if (bucket) {
+            addBucketUsage(bucket, row);
+          }
+        }
+        return starts.map((start) => buckets.get(start));
+      }
+
+      function hourBucketStarts(from, count) {
+        const start = floorHour(from);
+        return Array.from({ length: count }, (_, index) => start + index * HOUR_MS);
+      }
+
+      function dayBucketStarts(from, count) {
+        const start = floorLocalDay(from);
+        return Array.from({ length: count }, (_, index) => addLocalDays(start, index));
+      }
+
+      function emptyBucket(start, unit) {
+        return {
+          bucketStart: new Date(start).toISOString(),
+          bucketUnit: unit,
+          label: unit === "day" ? formatDayLabel(start) : formatHourLabel(start),
+          requestCount: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          cachedTokens: 0,
+          reasoningTokens: 0,
+        };
+      }
+
+      function addBucketUsage(bucket, row) {
+        bucket.requestCount += Number(row.requestCount) || 0;
+        bucket.inputTokens += Number(row.inputTokens) || 0;
+        bucket.outputTokens += Number(row.outputTokens) || 0;
+        bucket.totalTokens += Number(row.totalTokens) || 0;
+        bucket.cachedTokens += Number(row.cachedTokens) || 0;
+        bucket.reasoningTokens += Number(row.reasoningTokens) || 0;
+      }
+
+      function renderBarChart(rows) {
+        hideChartTooltip();
+        const left = 4;
+        const right = 98;
+        const top = 7;
+        const bottom = 58;
+        const height = bottom - top;
+        drawChartGrid(left, right, top, bottom);
+
+        if (rows.length === 0) {
+          return;
+        }
+
+        const maxTokens = Math.max(1, ...rows.map(chartStackTotal));
+        const maxRequests = Math.max(1, ...rows.map((row) => Number(row.requestCount) || 0));
+        const step = (right - left) / rows.length;
+        const gap = Math.min(1.2, step * 0.28);
+        const barWidth = Math.max(0.22, step - gap);
+        const requestPoints = [];
+
+        rows.forEach((row, index) => {
+          const x = left + index * step + gap / 2;
+          const center = x + barWidth / 2;
+          let yCursor = bottom;
+          for (const segment of chartVisualSegments(row, maxTokens, height)) {
+            yCursor -= segment.height;
+            nodes.usageChart.appendChild(svgEl("rect", {
+              class: "chart-segment",
+              x: x.toFixed(2),
+              y: yCursor.toFixed(2),
+              width: barWidth.toFixed(2),
+              height: segment.height.toFixed(2),
+              fill: segment.color,
+              "data-chart-index": String(index),
+            }));
+          }
+
+          const requestY = bottom - ((Number(row.requestCount) || 0) / maxRequests) * height;
+          requestPoints.push({ x: center, y: requestY });
+
+          const hit = svgEl("rect", {
+            class: "chart-hit",
+            x: (left + index * step).toFixed(2),
+            y: top,
+            width: step.toFixed(2),
+            height: height,
+            fill: "transparent",
+            "data-chart-index": String(index),
+          });
+          const title = svgEl("title");
+          title.textContent = chartTooltipText(row);
+          hit.appendChild(title);
+          nodes.usageChart.appendChild(hit);
+        });
+
+        if (requestPoints.some((point) => point.y < bottom)) {
+          // 请求数只保留趋势线，避免宽屏拉伸 SVG 时圆点遮挡 token 柱。
+          nodes.usageChart.appendChild(svgEl("path", {
+            class: "chart-line",
+            d: requestPoints.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" "),
+          }));
+        }
+      }
+
+      function drawChartGrid(left, right, top, bottom) {
+        for (const ratio of [0, 0.25, 0.5, 0.75, 1]) {
+          const y = bottom - (bottom - top) * ratio;
+          nodes.usageChart.appendChild(svgEl("line", {
+            class: ratio === 0 ? "chart-axis" : "chart-grid",
+            x1: left,
+            x2: right,
+            y1: y.toFixed(2),
+            y2: y.toFixed(2),
+          }));
+        }
+      }
+
+      function chartSegments(row) {
+        const input = Math.max(0, Number(row.inputTokens) || 0);
+        const output = Math.max(0, Number(row.outputTokens) || 0);
+        const cached = Math.min(input, Math.max(0, Number(row.cachedTokens) || 0));
+        const reasoning = Math.min(output, Math.max(0, Number(row.reasoningTokens) || 0));
+        return [
+          { value: Math.max(0, input - cached), color: "var(--good)" },
+          { value: Math.max(0, output - reasoning), color: "var(--warn)" },
+          { value: reasoning, color: "#a66fed" },
+          { value: cached, color: "#7eb9e8" },
+        ];
+      }
+
+      function chartStackTotal(row) {
+        const stacked = chartSegments(row).reduce((sum, segment) => sum + segment.value, 0);
+        return Math.max(stacked, Number(row.totalTokens) || 0);
+      }
+
+      function chartVisualSegments(row, maxTokens, chartHeight) {
+        // 非零分段给最小可视高度，避免缓存/思考 token 很少时只显示成一条细线。
+        const segments = chartSegments(row)
+          .filter((segment) => segment.value > 0)
+          .map((segment) => ({
+            ...segment,
+            height: (segment.value / maxTokens) * chartHeight,
+          }));
+        if (segments.length === 0) {
+          return [];
+        }
+        const minHeight = Math.min(1.35, chartHeight / segments.length);
+        const wanted = segments.map((segment) => Math.max(minHeight, segment.height));
+        const wantedTotal = wanted.reduce((sum, value) => sum + value, 0);
+        if (wantedTotal <= chartHeight) {
+          return segments.map((segment, index) => ({ ...segment, height: wanted[index] }));
+        }
+        const minTotal = minHeight * segments.length;
+        if (minTotal >= chartHeight) {
+          return segments.map((segment) => ({ ...segment, height: chartHeight / segments.length }));
+        }
+        const flexible = wanted.map((value) => Math.max(0, value - minHeight));
+        const flexibleTotal = flexible.reduce((sum, value) => sum + value, 0);
+        return segments.map((segment, index) => ({
+          ...segment,
+          height: minHeight + (flexibleTotal > 0 ? (flexible[index] / flexibleTotal) * (chartHeight - minTotal) : 0),
+        }));
+      }
+
+      function showChartTooltip(event) {
+        const target = event.target.closest("[data-chart-index]");
+        if (!target) {
+          hideChartTooltip();
+          return;
+        }
+        const index = Number(target.getAttribute("data-chart-index"));
+        const row = state.usageChartRows[index];
+        if (!row) {
+          hideChartTooltip();
+          return;
+        }
+        nodes.chartTooltip.textContent = chartTooltipText(row);
+        nodes.chartTooltip.classList.remove("hidden");
+
+        const bounds = nodes.chartPlot.getBoundingClientRect();
+        const tooltipBounds = nodes.chartTooltip.getBoundingClientRect();
+        const width = tooltipBounds.width || 220;
+        const height = tooltipBounds.height || 120;
+        let left = event.clientX - bounds.left + 14;
+        let top = event.clientY - bounds.top + 14;
+        if (left + width > bounds.width - 8) {
+          left = event.clientX - bounds.left - width - 14;
+        }
+        if (top + height > bounds.height - 8) {
+          top = event.clientY - bounds.top - height - 14;
+        }
+        nodes.chartTooltip.style.left = `${Math.max(8, left)}px`;
+        nodes.chartTooltip.style.top = `${Math.max(8, top)}px`;
+      }
+
+      function hideChartTooltip() {
+        nodes.chartTooltip.classList.add("hidden");
+      }
+
+      function chartTooltipText(row) {
+        return [
+          row.label || formatDate(row.bucketStart || row.hourStart),
+          `请求 ${formatNumber(row.requestCount || 0)} · 总 ${formatNumber(row.totalTokens || 0)} Tokens`,
+          `输入 ${formatNumber(row.inputTokens || 0)} · 输出 ${formatNumber(row.outputTokens || 0)}`,
+          `缓存 ${formatNumber(row.cachedTokens || 0)} · 思考 ${formatNumber(row.reasoningTokens || 0)}`,
+        ].join("\n");
+      }
+
+      function renderEvents() {
+        nodes.eventTableMeta.textContent = `${state.usageEvents.length} 条`;
+        renderEventsTable();
+      }
+
+      function renderEventsTable() {
+        nodes.eventsBody.textContent = "";
+        nodes.eventTableWrap.classList.toggle("hidden", state.usageEvents.length === 0);
+        nodes.eventsEmpty.classList.toggle("hidden", state.usageEvents.length !== 0);
+        const page = paginateRows(state.usageEvents, "eventTablePage", state.eventTablePageSize);
+        renderPager({
+          pager: nodes.eventsPager,
+          info: nodes.eventsPageInfo,
+          stateNode: nodes.eventsPageState,
+          prev: nodes.eventsPrev,
+          next: nodes.eventsNext,
+        }, page, "条");
+        for (const event of page.rows) {
+          const tr = document.createElement("tr");
+          tr.append(
+            td(formatDate(event.createdAt), "mono", "时间"),
+            td(event.model || "-", "mono", "模型"),
+            td(event.endpoint || "-", "mono", "接口"),
+            td(badge(String(event.statusCode || "-"), event.statusCode >= 400 ? "error" : "ok"), "", "状态"),
+            td(formatDuration(event.durationMs || 0), "mono", "耗时"),
+            td(formatNumber(event.totalTokens || 0), "mono", "Tokens"),
+            td(event.credentialId || "-", "mono", "凭据"),
+          );
+          nodes.eventsBody.appendChild(tr);
+        }
+      }
+
+      function renderRanks() {
+        renderRankList({
+          container: nodes.modelRank,
+          pager: nodes.modelRankPager,
+          info: nodes.modelRankPageInfo,
+          stateNode: nodes.modelRankPageState,
+          prev: nodes.modelRankPrev,
+          next: nodes.modelRankNext,
+          pageKey: "modelRankPage",
+          pageSize: state.rankPageSize,
+        }, state.usageSummary.byModel, (item) => ({
+          title: item.model || "unknown model",
+          sub: `${item.endpoint || "-"} · ${formatNumber(item.requestCount || 0)} requests`,
+          value: item.totalTokens || 0,
+          unit: "tokens",
+        }));
+        renderRankList({
+          container: nodes.credentialRank,
+          pager: nodes.credentialRankPager,
+          info: nodes.credentialRankPageInfo,
+          stateNode: nodes.credentialRankPageState,
+          prev: nodes.credentialRankPrev,
+          next: nodes.credentialRankNext,
+          pageKey: "credentialRankPage",
+          pageSize: state.rankPageSize,
+        }, state.usageSummary.byCredential, (item) => ({
+          title: item.credentialId || "unknown credential",
+          sub: `${formatNumber(item.requestCount || 0)} requests`,
+          value: item.totalTokens || 0,
+          unit: "tokens",
+        }));
+        renderRankList({
+          container: nodes.clientRank,
+          pager: nodes.clientRankPager,
+          info: nodes.clientRankPageInfo,
+          stateNode: nodes.clientRankPageState,
+          prev: nodes.clientRankPrev,
+          next: nodes.clientRankNext,
+          pageKey: "clientRankPage",
+          pageSize: state.rankPageSize,
+        }, state.usageSummary.byClient, (item) => ({
+          title: item.clientKey || item.clientHash || "unknown client",
+          sub: `${formatNumber(item.requestCount || 0)} requests`,
+          value: item.totalTokens || 0,
+          unit: "tokens",
+        }));
+      }
+
+      function renderRankList(config, rows, mapItem) {
+        config.container.textContent = "";
+        if (!rows.length) {
+          config.container.appendChild(emptyNode("暂无聚合数据"));
+          renderPager(config, emptyPage(), "项");
+          return;
+        }
+        const page = paginateRows(rows, config.pageKey, config.pageSize);
+        renderPager(config, page, "项");
+        for (const row of page.rows.map(mapItem)) {
+          const item = document.createElement("div");
+          item.className = "rank-row";
+          item.append(
+            block("div", [
+              node("div", "rank-title mono", row.title),
+              node("div", "rank-sub", row.sub),
+            ]),
+            block("div", [
+              node("div", "rank-num", [
+                node("b", "mono", formatNumber(row.value)),
+                node("span", "", row.unit),
+              ]),
+            ]),
+          );
+          config.container.appendChild(item);
+        }
+      }
+
+      function paginateRows(rows, pageKey, pageSize) {
+        // 所有分页都基于同一份已同步数据裁切，保持表格和排行的页码边界一致。
+        const page = pageBounds(rows.length, pageKey, pageSize);
+        return {
+          ...page,
+          rows: rows.slice(page.start, page.end),
+        };
+      }
+
+      function pageBounds(total, pageKey, pageSize) {
+        const pageCount = Math.max(1, Math.ceil(total / pageSize));
+        state[pageKey] = Math.min(Math.max(1, state[pageKey]), pageCount);
+        const start = (state[pageKey] - 1) * pageSize;
+        const end = Math.min(start + pageSize, total);
+        return {
+          total,
+          page: state[pageKey],
+          pageCount,
+          start,
+          end,
+        };
+      }
+
+      function emptyPage() {
+        return { rows: [], total: 0, page: 1, pageCount: 1, start: 0, end: 0 };
+      }
+
+      function renderPager(config, page, unit) {
+        config.pager.classList.toggle("hidden", page.total === 0);
+        config.info.textContent = page.total === 0 ? `0 ${unit}` : `显示 ${page.start + 1}-${page.end} / ${page.total} ${unit}`;
+        config.stateNode.textContent = `${page.page} / ${page.pageCount}`;
+        syncPagerButtons(config.prev, config.next, page);
+      }
+
+      function syncPagerButtons(prev, next, page) {
+        prev.disabled = state.busy || page.total === 0 || page.page <= 1;
+        next.disabled = state.busy || page.total === 0 || page.page >= page.pageCount;
+      }
+
+      function renderCredentials() {
+        const counts = credentialStatusCounts();
+        const filters = [
+          ["all", "全部", counts.total],
+          ["available", "可用", counts.available],
+          ["refresh_due", "待刷新", counts.refresh_due],
+          ["cooldown", "冷却", counts.cooldown],
+          ["disabled", "禁用", counts.disabled],
+          ["invalid", "异常", counts.invalid],
+        ];
+        nodes.credentialFilters.textContent = "";
+        for (const [key, label, count] of filters) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.filter = key;
+          button.className = state.credentialFilter === key ? "active" : "";
+          button.innerHTML = `${label}<span class="pill mono">${count}</span>`;
+          nodes.credentialFilters.appendChild(button);
+        }
+
+        const rows = filteredCredentials();
+        const pageCount = Math.max(1, Math.ceil(rows.length / state.credentialPageSize));
+        state.credentialPage = Math.min(Math.max(1, state.credentialPage), pageCount);
+        const start = (state.credentialPage - 1) * state.credentialPageSize;
+        const pageRows = rows.slice(start, start + state.credentialPageSize);
+
+        nodes.credentialsMeta.textContent = `${rows.length} / ${state.credentials.length}`;
+        nodes.credentialsBody.textContent = "";
+        nodes.credentialTableWrap.classList.toggle("hidden", rows.length === 0);
+        nodes.credentialsEmpty.classList.toggle("hidden", rows.length !== 0);
+        nodes.credentialsPager.classList.toggle("hidden", rows.length === 0);
+        nodes.credentialsPageInfo.textContent = rows.length === 0 ? "0 条" : `显示 ${start + 1}-${Math.min(start + state.credentialPageSize, rows.length)} / ${rows.length} 条`;
+        nodes.credentialsPageState.textContent = `${state.credentialPage} / ${pageCount}`;
+        nodes.credentialsPrev.disabled = state.busy || state.credentialPage <= 1 || rows.length === 0;
+        nodes.credentialsNext.disabled = state.busy || state.credentialPage >= pageCount || rows.length === 0;
+
+        for (const item of pageRows) {
+          nodes.credentialsBody.appendChild(renderCredentialRow(item));
+          nodes.credentialsBody.appendChild(renderCredentialErrorRow(item));
+        }
+      }
+
+      function filteredCredentials() {
+        const keyword = nodes.credentialSearch.value.trim().toLowerCase();
+        return state.credentials.filter((item) => {
+          const matchesStatus =
+            state.credentialFilter === "all" ||
+            item.status === state.credentialFilter ||
+            (state.credentialFilter === "refresh_due" && item.status === "expired");
+          const text = [item.id, item.label, item.email, item.accountId, item.status, STATUS_TEXT[item.status], item.lastError]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return matchesStatus && text.includes(keyword);
+        });
+      }
+
+      function renderCredentialRow(item) {
+        const total = (Number(item.successCount) || 0) + (Number(item.failureCount) || 0);
+        const successRate = total === 0 ? 100 : Math.round(((Number(item.successCount) || 0) / total) * 1000) / 10;
+        const tr = document.createElement("tr");
+        tr.append(
+          td(identityNode(item), "", "身份"),
+          td(badge(STATUS_TEXT[item.status] || item.status, item.status), "", "状态"),
+          td(successNode(successRate, item), "", "成功率"),
+          td(quotaNode(item), "", "额度"),
+          td(lifecycleNode(item), "", "生命周期"),
+          td(actionNode(item), "", "操作"),
+        );
+        return tr;
+      }
+
+      function identityNode(item) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "identity";
+        wrapper.append(
+          node("div", "avatar mono", initials(item.label || item.email || item.id)),
+          block("div", [
+            node("div", "id-title", item.label || "-"),
+            node("div", "id-sub", item.email && item.email !== item.label ? item.email : item.accountId || ""),
+            node("div", "id-string", item.id || "-"),
+          ], "id-main"),
+        );
+        return wrapper;
+      }
+
+      function renderCredentialErrorRow(item) {
+        const tr = document.createElement("tr");
+        tr.className = "credential-error-row";
+        const cell = document.createElement("td");
+        cell.colSpan = 6;
+        const message = item.lastError || "无";
+        cell.appendChild(block("div", [
+          node("b", "", "最后报错"),
+          node("span", "mono", message),
+        ], `last-error ${item.lastError ? "has-error" : ""}`));
+        tr.appendChild(cell);
+        return tr;
+      }
+
+      function successNode(successRate, item) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "success-cell";
+        const rateClass = successRate >= 97 ? "" : successRate >= 85 ? "warn" : "bad";
+        wrapper.append(
+          node("div", `success-rate mono ${rateClass}`.trim(), `${successRate.toFixed(1)}%`),
+          node("div", "small-muted mono", `${formatNumber(item.successCount || 0)} / ${formatNumber(item.failureCount || 0)}`),
+        );
+        return wrapper;
+      }
+
+      function quotaNode(item) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "quota-cell";
+        const snapshots = Array.isArray(item.rateLimits) ? item.rateLimits : [];
+        const windows = quotaWindows(snapshots);
+        if (windows.length === 0) {
+          wrapper.appendChild(node("div", "small-muted", snapshots.length > 0 ? "无窗口数据" : "未同步"));
+          if (item.rateLimitsUpdatedAt) {
+            wrapper.appendChild(node("div", "small-muted mono", `更新 ${relativeTime(item.rateLimitsUpdatedAt)}`));
+          }
+          return wrapper;
+        }
+        for (const [label, window] of windows) {
+          wrapper.appendChild(quotaLine(label, window));
+        }
+        wrapper.appendChild(node("div", "small-muted mono", `更新 ${relativeTime(item.rateLimitsUpdatedAt)}`));
+        return wrapper;
+      }
+
+      function quotaWindows(snapshots) {
+        const ordered = [...snapshots].sort((left, right) => {
+          const leftScore = left?.limitId === "codex" ? 0 : 1;
+          const rightScore = right?.limitId === "codex" ? 0 : 1;
+          return leftScore - rightScore;
+        });
+        const windows = [];
+        for (const snapshot of ordered) {
+          if (!snapshot) continue;
+          const limitLabel = rateLimitLabel(snapshot);
+          if (snapshot.primary) {
+            windows.push([quotaWindowTitle(limitLabel, "主", snapshot.primary), snapshot.primary]);
+          }
+          if (snapshot.secondary) {
+            windows.push([quotaWindowTitle(limitLabel, "次", snapshot.secondary), snapshot.secondary]);
+          }
+        }
+        return windows;
+      }
+
+      function rateLimitLabel(snapshot) {
+        if (snapshot.limitName) return snapshot.limitName;
+        if (!snapshot.limitId || snapshot.limitId === "codex") return "";
+        return snapshot.limitId.replaceAll("_", " ");
+      }
+
+      function quotaWindowTitle(limitLabel, fallback, window) {
+        const windowLabel = quotaWindowLabel(window.windowMinutes, fallback);
+        return limitLabel ? `${limitLabel} ${windowLabel}` : windowLabel;
+      }
+
+      function quotaLine(prefix, window) {
+        const remaining = Math.max(0, Math.min(100, 100 - (Number(window.usedPercent) || 0)));
+        const line = document.createElement("div");
+        line.className = `quota-line ${remaining <= 5 ? "bad" : remaining <= 15 ? "warn" : ""}`.trim();
+        const title = `${prefix} ${remaining.toFixed(1)}%`;
+        const reset = window.resetAt ? relativeTime(new Date(Number(window.resetAt) * 1000).toISOString()) : "-";
+        line.append(
+          block("div", [
+            node("span", "", title),
+            node("b", "mono", reset),
+          ], "quota-line-head"),
+          block("div", [node("div", "quota-fill", "")], "quota-track"),
+        );
+        line.querySelector(".quota-fill").style.width = `${Math.max(2, remaining)}%`;
+        return line;
+      }
+
+      function quotaWindowLabel(minutes, fallback) {
+        const value = Number(minutes);
+        if (!Number.isFinite(value) || value <= 0) return fallback;
+        const day = 24 * 60;
+        const week = 7 * day;
+        const month = 30 * day;
+        if (value <= day + 3) return `${Math.max(1, Math.round(value / 60))}h`;
+        if (value <= week + 3) return "周";
+        if (value <= month + 3) return "月";
+        return "年";
+      }
+
+      function lifecycleNode(item) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "time-cell";
+        wrapper.append(
+          lifecycleLine("过期", relativeTime(item.expiresAt)),
+          lifecycleLine("刷新", relativeTime(item.lastRefresh)),
+          lifecycleLine("重试", relativeTime(item.nextRetryAt)),
+        );
+        return wrapper;
+      }
+
+      function lifecycleLine(label, value) {
+        const div = document.createElement("div");
+        div.append(node("span", "", label), node("b", "mono", value));
+        return div;
+      }
+
+      function actionNode(item) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "row-actions";
+        wrapper.append(
+          actionButton(item.id, "refresh", "刷新"),
+          actionButton(item.id, item.enabled ? "disable" : "enable", item.enabled ? "禁用" : "启用"),
+          actionButton(item.id, "delete", "删除", "danger"),
+        );
+        return wrapper;
+      }
+
+      function actionButton(id, action, label, tone = "") {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `button sm ${tone}`.trim();
+        button.dataset.id = id;
+        button.dataset.action = action;
+        button.textContent = label;
+        return button;
+      }
+
+      function renderImport() {
+        const fileCount = state.selectedFiles.length;
+        const hasText = nodes.credentialJson.value.trim().length > 0;
+        nodes.fileList.textContent = "";
+        for (const file of state.selectedFiles) {
+          const row = document.createElement("div");
+          row.className = "file-row";
+          row.append(node("span", "mono", file.name), node("span", file.name.endsWith(".json") ? "badge ok" : "badge warn", file.name.endsWith(".json") ? "JSON" : "检查格式"));
+          nodes.fileList.appendChild(row);
+        }
+        const total = fileCount + (hasText ? 1 : 0);
+        nodes.importCount.textContent = total === 0 ? "没有待导入内容" : `${total} 个输入源`;
+        nodes.importButton.disabled = state.busy || total === 0;
+      }
+
+      function renderEndpoints() {
+        nodes.endpointList.textContent = "";
+        for (const [verb, path] of ENDPOINTS) {
+          const row = document.createElement("div");
+          row.className = "endpoint-row";
+          row.append(
+            node("span", `verb ${verb.toLowerCase()}`, verb),
+            node("span", "endpoint-path mono", path),
+            copyButton(path),
+          );
+          nodes.endpointList.appendChild(row);
+        }
+      }
+
+      function copyButton(text) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "button sm ghost";
+        button.title = "复制路径";
+        button.setAttribute("aria-label", "复制路径");
+        button.innerHTML = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.4" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 5V3.7a1 1 0 0 0-1-1H3.7a1 1 0 0 0-1 1v5.8a1 1 0 0 0 1 1H5" stroke="currentColor" stroke-width="1.3"/></svg>';
+        button.addEventListener("click", async () => {
+          await navigator.clipboard.writeText(text);
+          toast("已复制", text, "ok");
+        });
+        return button;
+      }
+
+      function setView(view) {
+        state.view = view;
+        const labels = { overview: "总览", credentials: "凭据池", usage: "用量", endpoints: "接口" };
+        nodes.crumbCurrent.textContent = labels[view] || view;
+        nodes.navButtons.forEach((button) => button.classList.toggle("active", button.dataset.viewTarget === view));
+        nodes.views.forEach((panel) => panel.classList.toggle("active", panel.id === `view-${view}`));
+      }
+
+      function setBusy(nextBusy) {
+        state.busy = nextBusy;
+        syncBusy();
+      }
+
+      function syncBusy() {
+        const controls = document.querySelectorAll("button, select");
+        controls.forEach((control) => {
+          control.disabled = state.busy;
+        });
+        const rows = filteredCredentials();
+        const pageCount = Math.max(1, Math.ceil(rows.length / state.credentialPageSize));
+        const importSources = state.selectedFiles.length + (nodes.credentialJson.value.trim() ? 1 : 0);
+        nodes.credentialsPrev.disabled = state.busy || rows.length === 0 || state.credentialPage <= 1;
+        nodes.credentialsNext.disabled = state.busy || rows.length === 0 || state.credentialPage >= pageCount;
+        syncPagerButtons(nodes.eventsPrev, nodes.eventsNext, pageBounds(state.usageEvents.length, "eventTablePage", state.eventTablePageSize));
+        syncPagerButtons(nodes.modelRankPrev, nodes.modelRankNext, pageBounds(state.usageSummary.byModel.length, "modelRankPage", state.rankPageSize));
+        syncPagerButtons(nodes.credentialRankPrev, nodes.credentialRankNext, pageBounds(state.usageSummary.byCredential.length, "credentialRankPage", state.rankPageSize));
+        syncPagerButtons(nodes.clientRankPrev, nodes.clientRankNext, pageBounds(state.usageSummary.byClient.length, "clientRankPage", state.rankPageSize));
+        nodes.importButton.disabled = state.busy || importSources === 0;
+      }
+
+      function setNotice(message, kind = "") {
+        nodes.notice.textContent = message;
+        nodes.notice.className = kind ? `notice ${kind}` : "notice";
+      }
+
+      function toast(title, body, kind = "") {
+        const element = document.createElement("div");
+        element.className = `toast ${kind}`.trim();
+        element.id = `toast-${(state.toastSeq += 1)}`;
+        element.innerHTML = '<div class="toast-head"><div class="toast-title"></div><span class="spacer"></span><button class="button sm ghost" type="button" aria-label="关闭">×</button></div><div class="toast-body"></div>';
+        element.querySelector(".toast-title").textContent = title;
+        element.querySelector(".toast-body").textContent = body;
+        element.querySelector("button").addEventListener("click", () => element.remove());
+        nodes.toasts.appendChild(element);
+        window.setTimeout(() => element.remove(), 7000);
+      }
+
+      function forgetConnection() {
+        state.adminToken = "";
+        state.connected = false;
+        state.credentials = [];
+        state.usageSummary = emptyUsageSummary();
+        state.usageEvents = [];
+        state.lastUpdated = "";
+        nodes.adminToken.value = "";
+        resetAllPagination();
+        setNotice("等待连接");
+        render();
+      }
+
+      function cycleTheme() {
+        const themes = ["warm", "cool", "dark"];
+        state.themeIndex = (state.themeIndex + 1) % themes.length;
+        document.documentElement.dataset.theme = themes[state.themeIndex];
+      }
+
+      const RAIL_COLLAPSED_KEY = "codex-proxy:rail-collapsed";
+
+      function applyRailCollapsed(collapsed) {
+        nodes.app.classList.toggle("rail-collapsed", collapsed);
+        const label = collapsed ? "展开侧栏" : "收起侧栏";
+        const title = collapsed ? "展开" : "收起";
+        nodes.railToggleButton.setAttribute("aria-label", label);
+        nodes.railToggleButton.setAttribute("title", title);
+        nodes.railToggleLabel.textContent = title;
+      }
+
+      function toggleRail() {
+        const collapsed = !nodes.app.classList.contains("rail-collapsed");
+        applyRailCollapsed(collapsed);
+        try {
+          localStorage.setItem(RAIL_COLLAPSED_KEY, collapsed ? "1" : "0");
+        } catch {}
+      }
+
+      function restoreRailCollapsed() {
+        try {
+          if (localStorage.getItem(RAIL_COLLAPSED_KEY) === "1") {
+            applyRailCollapsed(true);
+          }
+        } catch {}
+      }
+
+      function clearImport() {
+        state.selectedFiles = [];
+        nodes.credentialFiles.value = "";
+        nodes.credentialJson.value = "";
+        renderImport();
+      }
+
+      function resetUsagePagination() {
+        state.eventTablePage = 1;
+        state.modelRankPage = 1;
+        state.credentialRankPage = 1;
+        state.clientRankPage = 1;
+      }
+
+      function resetAllPagination() {
+        state.credentialPage = 1;
+        resetUsagePagination();
+      }
+
+      function normalizedBaseUrl() {
+        const value = nodes.baseUrl.value.trim() || window.location.origin;
+        return value.replace(/\/+$/, "");
+      }
+
+      function requireAdminToken() {
+        if (!state.adminToken) {
+          const token = nodes.adminToken.value.trim();
+          if (token) state.adminToken = token;
+        }
+        if (!state.adminToken) {
+          throw new Error("ADMIN_TOKEN 不能为空");
+        }
+      }
+
+      function usageRangeParams(rangeKey = state.usageRange) {
+        // 查询窗口与图表桶边界对齐，保证 24h 是完整小时桶，7d/30d 是完整日期桶。
+        const config = RANGE_BUCKETS[rangeKey] ?? RANGE_BUCKETS["24h"];
+        const now = Date.now();
+        const to = config.unit === "day" ? addLocalDays(floorLocalDay(now), 1) : floorHour(now) + HOUR_MS;
+        const from = config.unit === "day" ? addLocalDays(to, -config.count) : to - config.count * HOUR_MS;
+        return {
+          from: new Date(from).toISOString(),
+          to: new Date(to).toISOString(),
+        };
+      }
+
+      function normalizeUsageSummary(input) {
+        return {
+          from: input?.from,
+          to: input?.to,
+          total: input?.total || emptyUsageTotal(),
+          byHour: Array.isArray(input?.byHour) ? input.byHour : [],
+          byModel: Array.isArray(input?.byModel) ? input.byModel : [],
+          byCredential: Array.isArray(input?.byCredential) ? input.byCredential : [],
+          byClient: Array.isArray(input?.byClient) ? input.byClient : [],
+        };
+      }
+
+      function emptyUsageSummary() {
+        return {
+          from: "",
+          to: "",
+          total: emptyUsageTotal(),
+          byHour: [],
+          byModel: [],
+          byCredential: [],
+          byClient: [],
+        };
+      }
+
+      function emptyUsageTotal() {
+        return {
+          requestCount: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          cachedTokens: 0,
+          reasoningTokens: 0,
+        };
+      }
+
+      function credentialStatusCounts() {
+        const counts = { total: state.credentials.length, available: 0, disabled: 0, cooldown: 0, refresh_due: 0, invalid: 0 };
+        for (const item of state.credentials) {
+          if (item.status === "available") counts.available += 1;
+          if (item.status === "disabled") counts.disabled += 1;
+          if (item.status === "cooldown") counts.cooldown += 1;
+          if (item.status === "refresh_due" || item.status === "expired") counts.refresh_due += 1;
+          if (item.status === "invalid") counts.invalid += 1;
+        }
+        return counts;
+      }
+
+      function usageEventStats() {
+        if (state.usageEvents.length === 0) {
+          return { errorRate: 0, avgDuration: 0, p95Duration: 0 };
+        }
+        const durations = state.usageEvents.map((item) => Number(item.durationMs) || 0).sort((a, b) => a - b);
+        const errors = state.usageEvents.filter((item) => Number(item.statusCode) >= 400).length;
+        const avg = Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length);
+        const p95Index = Math.max(0, Math.ceil(durations.length * 0.95) - 1);
+        return {
+          errorRate: rate(errors, state.usageEvents.length),
+          avgDuration: avg,
+          p95Duration: durations[p95Index] || 0,
+        };
+      }
+
+      function rate(part, whole) {
+        if (!whole) return 0;
+        return Math.round((Number(part || 0) / Number(whole)) * 1000) / 10;
+      }
+
+      function formatNumber(value) {
+        return new Intl.NumberFormat("zh-CN").format(Number(value) || 0);
+      }
+
+      function formatDuration(ms) {
+        const value = Number(ms) || 0;
+        if (value < 1000) return `${Math.round(value)} ms`;
+        return `${(value / 1000).toFixed(2)} s`;
+      }
+
+      function floorHour(value) {
+        return Math.floor(Number(value) / HOUR_MS) * HOUR_MS;
+      }
+
+      function floorLocalDay(value) {
+        const date = new Date(value);
+        date.setHours(0, 0, 0, 0);
+        return date.getTime();
+      }
+
+      function addLocalDays(value, days) {
+        const date = new Date(value);
+        date.setDate(date.getDate() + days);
+        return date.getTime();
+      }
+
+      function formatHourLabel(value) {
+        return new Intl.DateTimeFormat("zh-CN", {
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+        }).format(new Date(value));
+      }
+
+      function formatDayLabel(value) {
+        return new Intl.DateTimeFormat("zh-CN", {
+          month: "2-digit",
+          day: "2-digit",
+        }).format(new Date(value));
+      }
+
+      function formatDate(value) {
+        if (!value) return "-";
+        const date = value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(date.getTime())) return "-";
+        return new Intl.DateTimeFormat("zh-CN", {
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(date);
+      }
+
+      function relativeTime(value) {
+        if (!value) return "-";
+        const time = new Date(value).getTime();
+        if (!Number.isFinite(time)) return "-";
+        const diff = time - Date.now();
+        const abs = Math.abs(diff);
+        const minutes = Math.round(abs / 60_000);
+        if (minutes < 1) return "现在";
+        if (minutes < 60) return diff >= 0 ? `${minutes} 分钟后` : `${minutes} 分钟前`;
+        const hours = Math.round(abs / 3_600_000);
+        if (hours < 48) return diff >= 0 ? `${hours} 小时后` : `${hours} 小时前`;
+        const days = Math.round(abs / 86_400_000);
+        return diff >= 0 ? `${days} 天后` : `${days} 天前`;
+      }
+
+      function hostLabel(url) {
+        try {
+          return new URL(url).host;
+        } catch (error) {
+          return url;
+        }
+      }
+
+      function initials(value) {
+        const parts = String(value || "?").split(/[@._\-\s]+/).filter(Boolean);
+        const a = parts[0]?.[0] || "?";
+        const b = parts[1]?.[0] || parts[0]?.[1] || "";
+        return `${a}${b}`.toUpperCase();
+      }
+
+      function errorMessage(error) {
+        return error instanceof Error ? error.message : "请求失败";
+      }
+
+      function emptyNode(text) {
+        const div = document.createElement("div");
+        div.className = "empty";
+        div.textContent = text;
+        return div;
+      }
+
+      function node(tag, className, content) {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        if (Array.isArray(content)) {
+          element.append(...content);
+        } else {
+          element.textContent = content || "";
+        }
+        return element;
+      }
+
+      function block(tag, children, className = "") {
+        const element = document.createElement(tag);
+        if (className) element.className = className;
+        element.append(...children);
+        return element;
+      }
+
+      function td(content, className = "", label = "") {
+        const cell = document.createElement("td");
+        if (className) cell.className = className;
+        if (label) cell.dataset.label = label;
+        if (content instanceof Node) {
+          cell.appendChild(content);
+        } else {
+          cell.textContent = content;
+        }
+        return cell;
+      }
+
+      function badge(text, type) {
+        const element = document.createElement("span");
+        element.className = `badge ${type || ""}`.trim();
+        element.textContent = text;
+        return element;
+      }
+
+      function svgEl(name, attrs = {}) {
+        const element = document.createElementNS("http://www.w3.org/2000/svg", name);
+        for (const [key, value] of Object.entries(attrs)) {
+          element.setAttribute(key, value);
+        }
+        return element;
+      }
+    </script>
+  </body>
+</html>

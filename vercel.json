@@ -1,0 +1,40 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 300
+    }
+  },
+  "crons": [
+    {
+      "path": "/cron/refresh",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/cron/cleanup",
+      "schedule": "0 3 * * *"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/dashboard",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/healthz",
+      "destination": "/api?__path=/healthz"
+    },
+    {
+      "source": "/v1/:path*",
+      "destination": "/api?__path=/v1/:path*"
+    },
+    {
+      "source": "/admin/:path*",
+      "destination": "/api?__path=/admin/:path*"
+    },
+    {
+      "source": "/cron/:path*",
+      "destination": "/api?__path=/cron/:path*"
+    }
+  ]
+}

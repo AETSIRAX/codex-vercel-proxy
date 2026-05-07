@@ -1,0 +1,11 @@
+node_modules/
+.vercel/
+
+.dev.vars
+.env
+.env.local
+.env.*.local
+
+scripts/
+
+.DS_Store

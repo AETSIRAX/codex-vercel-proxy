@@ -1,0 +1,24 @@
+{
+  "name": "codex-vercel-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "local": "npx vercel dev --local --listen 127.0.0.1:3000",
+    "deploy": "npx vercel deploy --prod",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.0",
+    "typescript": "6.0.3"
+  },
+  "dependencies": {
+    "@vercel/functions": "^3.5.1",
+    "postgres": "^3.4.9"
+  }
+}
