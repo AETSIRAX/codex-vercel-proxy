@@ -3,12 +3,13 @@ import {
   fetchCodexWithRotation,
   extractResponseText,
   patchCompletedOutput,
-  prepareCodexPayload,
   reportResponseStreamError,
   responseObject,
   responseStreamError,
   type OutputItem,
 } from "./codex.js";
+import { isResponsesLiteModel, prepareCodexPayload } from "./codex-payload.js";
+import { resolveChatVerbosity } from "./chat-payload.js";
 import {
   applyCodexIdentityExposeHeaders,
   applyCodexIdentityExposeJson,
@@ -160,15 +161,16 @@ function chatToResponses(input: JsonObject, originalToolNameMap: Map<string, str
     }
   }
 
+  const modelName = stringValue(input.model) ?? configuredModels(env)[0] ?? "gpt-5.5";
   const payload: JsonObject = {
-    model: stringValue(input.model) ?? configuredModels(env)[0] ?? "gpt-5.5",
+    model: modelName,
     input: responseInput,
     instructions: "",
     stream: input.stream === true,
     parallel_tool_calls: true,
     store: false,
   };
-  const reasoning = chatReasoning(input);
+  const reasoning = chatReasoning(input, isResponsesLiteModel(modelName));
   if (reasoning !== undefined) {
     payload.reasoning = reasoning;
     payload.include = ["reasoning.encrypted_content"];
@@ -186,7 +188,7 @@ function chatToResponses(input: JsonObject, originalToolNameMap: Map<string, str
   return payload;
 }
 
-function chatReasoning(input: JsonObject): JsonObject | undefined {
+function chatReasoning(input: JsonObject, liteModel: boolean): JsonObject | undefined {
   if (isRecord(input.reasoning)) {
     return structuredClone(input.reasoning) as JsonObject;
   }
@@ -194,10 +196,8 @@ function chatReasoning(input: JsonObject): JsonObject | undefined {
   if (effort === undefined) {
     return undefined;
   }
-  return {
-    effort,
-    summary: "auto",
-  };
+  // gpt-5.6 (responses lite) models default to no reasoning summary upstream.
+  return liteModel ? { effort } : { effort, summary: "auto" };
 }
 
 function normalizeContentText(content: unknown): string {
@@ -395,7 +395,7 @@ function applyTextFormat(input: JsonObject, payload: JsonObject): void {
     }
   }
 
-  const verbosity = stringValue(text?.verbosity);
+  const verbosity = resolveChatVerbosity(input);
   if (verbosity !== undefined) {
     textOut.verbosity = verbosity;
   }

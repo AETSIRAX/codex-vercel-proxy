@@ -1,6 +1,11 @@
 import { credentialManager, scheduleCredentialRateLimitUpdate, scheduleCredentialSuccessUpdate } from "./credential-manager.js";
 import { resolveCodexCredentialAffinityKey } from "./codex-affinity.js";
 import {
+  buildCodexEndpointUrl,
+  buildCodexRequestHeaders,
+  type CodexJsonEndpointPath,
+} from "./codex-endpoint.js";
+import {
   applyCodexIdentityConfuseHeaders,
   applyCodexIdentityConfusePayload,
   applyCodexIdentityExposeHeaders,
@@ -9,8 +14,9 @@ import {
   CodexIdentityInputError,
   type CodexIdentityState,
 } from "./codex-identity.js";
-import { codexBaseURL, userAgent } from "./env.js";
+import { codexBaseURL } from "./env.js";
 import type { AppEnv } from "./env.js";
+import { isResponsesLiteModel, prepareCodexPayload } from "./codex-payload.js";
 import { isUsageLimitErrorType, parseRateLimitHeaders } from "./rate-limits.js";
 import { settingsStore, type ProxySettings } from "./settings.js";
 import { readSseData, encodeSseData, parseSseJson } from "./sse.js";
@@ -65,94 +71,6 @@ interface UpstreamErrorSummary {
 const PROMPT_CACHE_NAME_PREFIX = "codex-vercel-proxy:codex:prompt-cache:";
 const MAX_CREDENTIAL_ATTEMPTS = 8;
 
-export function prepareCodexPayload(input: JsonObject, forceStream: boolean, settings: ProxySettings): JsonObject {
-  const payload = structuredClone(input) as JsonObject;
-  if (typeof payload.input === "string") {
-    payload.input = [{ type: "message", role: "user", content: [{ type: "input_text", text: payload.input }] }];
-  }
-  if (forceStream) {
-    payload.stream = true;
-  }
-  payload.store = false;
-  payload.parallel_tool_calls = true;
-  delete payload.previous_response_id;
-  delete payload.prompt_cache_retention;
-  delete payload.safety_identifier;
-  delete payload.stream_options;
-  delete payload.max_output_tokens;
-  delete payload.max_completion_tokens;
-  delete payload.max_tokens;
-  delete payload.temperature;
-  delete payload.top_p;
-  delete payload.truncation;
-  delete payload.context_management;
-  delete payload.user;
-  delete payload.service_tier;
-  if (settings.fastMode) {
-    payload.service_tier = "priority";
-  }
-  normalizeResponsesInputRoles(payload);
-  normalizeCodexBuiltinTools(payload);
-  if (!("instructions" in payload) || payload.instructions === null) {
-    payload.instructions = "";
-  }
-  normalizeReasoningInclude(payload);
-  return payload;
-}
-
-function normalizeReasoningInclude(payload: JsonObject): void {
-  const include = Array.isArray(payload.include) ? payload.include : [];
-  const filtered = include.filter((item) => item !== "reasoning.encrypted_content") as JsonValue[];
-  if (isRecord(payload.reasoning)) {
-    filtered.push("reasoning.encrypted_content");
-  }
-  if (filtered.length > 0) {
-    payload.include = filtered;
-  } else {
-    delete payload.include;
-  }
-}
-
-function normalizeResponsesInputRoles(payload: JsonObject): void {
-  if (!Array.isArray(payload.input)) {
-    return;
-  }
-  for (const item of payload.input) {
-    if (isRecord(item) && item.role === "system") {
-      item.role = "developer";
-    }
-  }
-}
-
-function normalizeCodexBuiltinTools(payload: JsonObject): void {
-  normalizeToolArray(payload.tools);
-
-  const toolChoice = payload.tool_choice;
-  if (!isRecord(toolChoice)) {
-    return;
-  }
-  normalizeToolObject(toolChoice);
-  normalizeToolArray(toolChoice.tools);
-}
-
-function normalizeToolArray(value: unknown): void {
-  if (!Array.isArray(value)) {
-    return;
-  }
-  for (const item of value) {
-    if (isRecord(item)) {
-      normalizeToolObject(item);
-    }
-  }
-}
-
-function normalizeToolObject(tool: Record<string, unknown>): void {
-  const type = stringValue(tool.type);
-  if (type === "web_search_preview" || type === "web_search_preview_2025_03_11") {
-    tool.type = "web_search";
-  }
-}
-
 export async function proxyResponses(request: Request, env: AppEnv, input: JsonObject): Promise<Response> {
   const wantsStream = input.stream === true;
   const settings = await settingsStore(env).getSettings();
@@ -174,6 +92,72 @@ export async function proxyResponses(request: Request, env: AppEnv, input: JsonO
     return streamResponses(upstream.response, upstream.credential, env, usageContext, upstream.identityState);
   }
   return aggregateResponses(upstream.response, upstream.credential, env, usageContext, upstream.identityState);
+}
+
+export async function proxyCodexJsonEndpoint(
+  request: Request,
+  env: AppEnv,
+  path: CodexJsonEndpointPath,
+  input?: JsonObject,
+  query?: URLSearchParams,
+): Promise<Response> {
+  const manager = credentialManager(env);
+  const excluded: string[] = [];
+  let lastError: Response | undefined;
+  const affinityKey = resolveCodexCredentialAffinityKey(request);
+
+  for (let attempt = 0; attempt < MAX_CREDENTIAL_ATTEMPTS; attempt += 1) {
+    let credential: SelectedCredential | null;
+    try {
+      credential = await manager.selectCredential({ excludedIds: excluded, affinityKey });
+    } catch (error) {
+      return errorResponse(503, normalizeErrorMessage(error), "credential_unavailable");
+    }
+    if (credential === null) {
+      return errorResponse(503, "no available codex credential", "credential_unavailable");
+    }
+
+    const upstream = await fetchCodexJsonEndpointOnce(request, env, credential, path, input, query);
+    if (upstream.ok || upstream.status === 304) {
+      scheduleCredentialSuccessUpdate(env, credential.id, upstream.status);
+      scheduleCredentialRateLimitUpdate(env, credential);
+      return passThroughCodexResponse(upstream);
+    }
+
+    const body = await upstream.text();
+    // Extension endpoints answer 403 when the account lacks the feature gate
+    // (models catalog, memories, search); that is not a credential failure, so
+    // surface it without cooling the credential down or rotating.
+    if (upstream.status === 403) {
+      return responseFromConsumedUpstream(upstream, body);
+    }
+    const retryAfter = retryAfterSeconds(upstream.headers.get("retry-after"));
+    const error = summarizeErrorBody(body);
+    const usageErrorType = usageLimitErrorType(error.errorType, error.code);
+    let rateLimits = parseRateLimitHeaders(upstream.headers);
+    if (upstream.status === 429 && usageErrorType !== undefined) {
+      try {
+        rateLimits = await manager.refreshRateLimits(credential);
+      } catch (refreshError) {
+        console.error(`rate limit refresh failed: ${normalizeErrorMessage(refreshError)}`);
+      }
+    }
+    await manager.reportResult(credential.id, {
+      ok: false,
+      status: upstream.status,
+      retryAfterSeconds: retryAfter,
+      errorType: usageErrorType ?? error.errorType ?? error.code,
+      message: error.message,
+      rateLimits: rateLimits.length > 0 ? rateLimits : undefined,
+    });
+    lastError = responseFromConsumedUpstream(upstream, body);
+    excluded.push(credential.id);
+    if (!isRotatableStatus(upstream.status)) {
+      return lastError;
+    }
+  }
+
+  return lastError ?? errorResponse(503, "no available codex credential", "credential_unavailable");
 }
 
 export async function fetchCodexWithRotation(
@@ -259,28 +243,22 @@ async function fetchCodexOnce(
   const baseURL = codexBaseURL();
   const upstreamPayload = structuredClone(payload) as JsonObject;
   const identityState = await applyCodexIdentityConfusePayload(settings, credential, payload, upstreamPayload);
-  const headers = new Headers();
-  headers.set("Content-Type", "application/json");
-  headers.set("Accept", stream ? "text/event-stream" : "application/json");
-  headers.set("Authorization", `Bearer ${credential.token}`);
-  headers.set("User-Agent", userAgent(env));
-  headers.set("Connection", "Keep-Alive");
-  copyHeader(request.headers, headers, "Version");
-  copyHeader(request.headers, headers, "X-Codex-Turn-Metadata");
-  copyHeader(request.headers, headers, "X-Codex-Turn-State");
-  copyHeader(request.headers, headers, "X-Codex-Window-Id");
-  copyHeader(request.headers, headers, "X-Codex-Parent-Thread-Id");
-  copyHeader(request.headers, headers, "X-Codex-Installation-Id");
-  copyHeader(request.headers, headers, "X-Codex-Beta-Features");
+  const headers = buildCodexRequestHeaders(
+    request,
+    env,
+    credential,
+    stream ? "text/event-stream" : "application/json",
+    true,
+  );
+  if (isResponsesLiteModel(stringValue(upstreamPayload.model))) {
+    headers.set("X-OpenAI-Internal-Codex-Responses-Lite", "true");
+  }
   const sessionId = request.headers.get("session-id")?.trim() || identity.sessionId;
   const threadId = request.headers.get("thread-id")?.trim() || identity.threadId;
   headers.set("X-Client-Request-Id", request.headers.get("x-client-request-id")?.trim() || threadId);
   headers.set("originator", request.headers.get("originator")?.trim() || "codex_cli_rs");
   headers.set("session-id", sessionId);
   headers.set("thread-id", threadId);
-  if (credential.accountId) {
-    headers.set("ChatGPT-Account-Id", credential.accountId);
-  }
   await applyCodexIdentityConfuseHeaders(headers, identityState);
   const response = await fetch(`${baseURL}/responses`, {
     method: "POST",
@@ -288,6 +266,48 @@ async function fetchCodexOnce(
     body: JSON.stringify(upstreamPayload),
   });
   return { response, identityState };
+}
+
+async function fetchCodexJsonEndpointOnce(
+  request: Request,
+  env: AppEnv,
+  credential: SelectedCredential,
+  path: CodexJsonEndpointPath,
+  input?: JsonObject,
+  query?: URLSearchParams,
+): Promise<Response> {
+  const url = buildCodexEndpointUrl(path, query);
+  const headers = buildCodexRequestHeaders(request, env, credential, "application/json", input !== undefined);
+  return fetch(url, {
+    method: request.method,
+    headers,
+    body: input === undefined ? undefined : JSON.stringify(input),
+  });
+}
+
+function passThroughCodexResponse(response: Response): Response {
+  const headers = normalizedUpstreamHeaders(response.headers);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function responseFromConsumedUpstream(response: Response, body: string): Response {
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: normalizedUpstreamHeaders(response.headers),
+  });
+}
+
+function normalizedUpstreamHeaders(source: Headers): Headers {
+  const headers = new Headers(source);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  return headers;
 }
 
 async function ensureRequestIdentity(request: Request, payload: JsonObject): Promise<RequestIdentity> {

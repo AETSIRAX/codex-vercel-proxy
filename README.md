@@ -17,6 +17,8 @@ Codex Vercel Proxy 是一个部署在 Vercel Functions 上的 Codex 代理服务
 ## 功能特性
 
 - OpenAI 兼容接口：`/v1/models`、`/v1/responses`、`/v1/chat/completions`
+- Codex 后端接口：`/v1/alpha/search`、`/v1/responses/compact`、`/v1/images/generations`、`/v1/images/edits`、`/v1/memories/trace_summarize`
+- GPT-5.6 系列：内置 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`，自动按 Responses Lite 协议适配上游请求，思考等级支持 `low` 到 `max`（`ultra` 与 Codex CLI 一致映射为 `max`）
 - OAuth 登录：控制面板内置 Codex OAuth 登录（PKCE），浏览器登录 OpenAI 账号后粘贴回调地址即可自动获取并导入凭证，无需手动准备 token JSON
 - 凭证池管理：支持多条 Codex 凭证导入、状态查看、启用、禁用、刷新和删除
 - 自动轮换：上游返回 `401`、`403`、`429` 或 `5xx` 时自动尝试下一条可用凭证
@@ -39,6 +41,10 @@ Client / SDK
   |  /v1/models
   |  /v1/responses
   |  /v1/chat/completions
+  |  /v1/alpha/search
+  |  /v1/responses/compact
+  |  /v1/images/*
+  |  /v1/memories/trace_summarize
   v
 Vercel Rewrite
   |
@@ -51,8 +57,11 @@ src/index.ts
   +-- src/auth.ts                 鉴权
   +-- src/chat.ts                 Chat Completions 转 Responses
   +-- src/codex-affinity.ts       Codex 会话粘连凭据选择
+  +-- src/codex-endpoint.ts       Codex 扩展端点路由与公共请求头
   +-- src/codex-identity.ts       Codex 客户端标识混淆与恢复
   +-- src/codex-oauth.ts          Codex OAuth 登录（PKCE、授权码交换）
+  +-- src/codex-payload.ts        请求规范化与 GPT-5.6 Responses Lite 适配
+  +-- src/chat-payload.ts         Chat 请求字段兼容转换
   +-- src/codex.ts                上游请求、SSE、凭证轮换
   +-- src/credential-manager.ts   Postgres 凭证状态管理
   +-- src/rate-limits.ts          Codex 配额快照解析
@@ -82,7 +91,7 @@ Codex upstream / Postgres
 | `ADMIN_TOKEN` | 首次初始化 | `/admin/*` 和控制面板访问密钥，后续可在控制面板更新 |
 | `CRON_SECRET` | 是 | `/cron/refresh` 和 `/cron/cleanup` 定时任务接口密钥 |
 | `CRED_ENCRYPTION_KEY` | 是 | 凭证加密密钥，建议使用长随机字符串 |
-| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-5.5,gpt-5.4` |
+| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4` |
 | `USER_AGENT` | 否 | 请求上游 Codex 时使用的 User-Agent |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
@@ -142,8 +151,8 @@ PROXY_API_KEY=replace-with-local-proxy-key
 ADMIN_TOKEN=replace-with-local-admin-token
 CRON_SECRET=replace-with-local-cron-secret
 CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
-MODELS=gpt-5.4,gpt-5.5
-USER_AGENT="codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)"
+MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4
+USER_AGENT="codex-tui/0.144.1 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.144.1)"
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
 REFRESH_LEAD_SECONDS=172800
 REFRESH_MIN_INTERVAL_SECONDS=300
@@ -226,6 +235,32 @@ curl "https://<vercel-domain>/v1/responses" \
   }'
 ```
 
+### Codex CLI 配置
+
+在 `~/.codex/config.toml` 中使用独立 provider，并显式关闭 Responses WebSocket：
+
+```toml
+model_provider = "codex_vercel_proxy"
+
+[model_providers.codex_vercel_proxy]
+name = "OpenAI"
+base_url = "https://<vercel-domain>/v1"
+env_key = "CODEX_PROXY_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+```
+
+在启动 Codex CLI 前设置代理 API KEY：
+
+```bash
+export CODEX_PROXY_API_KEY="<PROXY_API_KEY>"
+```
+
+`name = "OpenAI"` 使 Codex 启用 OpenAI 的搜索、图片和远程压缩扩展；`supports_websockets = false` 让请求固定使用当前代理支持的 HTTP/SSE 传输。代理场景建议使用以上独立 provider 配置；`openai_base_url` 会保留内置 OpenAI provider 的 WebSocket 能力。
+
+Vercel Hobby 套餐的函数时长上限为 300 秒，因此仓库中的 `maxDuration` 保持为 `300`。推理超过五分钟时，Vercel 会终止请求，包括仍在发送的 SSE 响应。
+
 导入单条凭证：
 
 ```bash
@@ -276,6 +311,19 @@ OpenAI 的 `refresh_token` 是一次性 token。刷新成功后，服务会把�
 如果上游返回 `HTTP 429: The usage limit has been reached`，或成功请求后的配额快照显示任意窗口剩余额度低于 10%，服务会读取这些窗口的未来 `reset_at`，把这条凭证冷却到对应窗口重置时间；多个窗口同时低于 10% 时取更晚的重置时间。没有可用重置时间时，失败路径才退回 `Retry-After` 或 `FAILURE_COOLDOWN_SECONDS`。
 
 控制面板的单条刷新会强制刷新该凭证 token，并立即同步该凭证额度快照。控制面板的全局“刷新凭据”会强制刷新所有启用凭证 token，再同步所有启用凭证额度快照，不受 `REFRESH_LEAD_SECONDS` 限制。
+
+## GPT-5.6 与思考等级
+
+GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`）在上游使用 Responses Lite 协议。代理会对这些模型自动完成适配：
+
+- 上游请求附带 `x-openai-internal-codex-responses-lite: true` 请求头，`parallel_tool_calls` 固定为 `false`，`reasoning.context` 缺省时补为 `all_turns`；
+- Lite 请求会清除 message、`function_call_output` 和 `custom_tool_call_output` 图片内容中的 `detail` 字段；
+- 顶层 `tools` 中的 `function`、`custom` 工具和非空 `instructions` 会移入 `input`，分别转换为 `additional_tools` 项和 developer 消息；如果客户端（如 Codex CLI 0.144+）已经发送 `additional_tools` 项，输入保持原样；
+- Responses Lite 上游只支持客户端执行的工具，不支持 `web_search` 等托管工具：GPT-5.6 请求携带托管工具时上游会返回明确的 `400 unsupported_value`（Codex CLI 自己也不给 5.6 发托管搜索，其搜索由 CLI 本地 `web.run` 工具执行）。需要服务端 `web_search` 请使用 `gpt-5.5` 及更早模型；
+- 思考等级支持 `low`、`medium`、`high`、`xhigh`、`max`。`ultra` 是 Codex 客户端本地概念（max 推理加自动任务委派），代理与 Codex CLI 行为一致，将其映射为 `max` 后发送上游；
+- GPT-5.6 上游要求客户端版本不低于 `0.144.0`，客户端未携带 `version` 请求头时代理默认发送 `0.144.1`，默认 `USER_AGENT` 也已同步到该版本。
+
+`gpt-5.5` 及更早模型不受以上适配影响，仍按原有方式转发。
 
 ## Prompt Caching
 
@@ -336,9 +384,12 @@ public/index.html            前端控制面板
 src/index.ts                 路由、CORS、接口分发
 src/auth.ts                  鉴权
 src/codex.ts                 Responses 代理、上游请求、凭证轮换
+src/codex-endpoint.ts        Codex 扩展端点路径与公共请求头构造
+src/codex-payload.ts         请求规范化与 GPT-5.6 Responses Lite 适配
 src/codex-affinity.ts        Codex 会话粘连凭据选择
 src/codex-identity.ts        Codex 客户端标识混淆与恢复
 src/chat.ts                  Chat Completions 转 Responses
+src/chat-payload.ts          Chat 请求字段兼容转换
 src/credential-manager.ts    Postgres 凭证存储、刷新、状态维护
 src/rate-limits.ts           Codex 配额快照解析和重置时间计算
 src/db.ts                    Postgres 共享连接

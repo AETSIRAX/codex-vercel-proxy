@@ -17,7 +17,9 @@ export interface AppEnv {
 }
 
 export const CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
-const DEFAULT_USER_AGENT = "codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)";
+// gpt-5.6 models require codex client version >= 0.144.0 upstream.
+export const DEFAULT_CODEX_CLI_VERSION = "0.144.1";
+const DEFAULT_USER_AGENT = `codex-tui/${DEFAULT_CODEX_CLI_VERSION} (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; ${DEFAULT_CODEX_CLI_VERSION})`;
 
 export function loadEnv(): AppEnv {
   return process.env;
@@ -43,7 +45,7 @@ export function codexBaseURL(): string {
 }
 
 export function configuredModels(env: AppEnv): string[] {
-  return (env.MODELS || "gpt-5.5,gpt-5.4")
+  return (env.MODELS || "gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4")
     .split(",")
     .map((model) => model.trim())
     .filter((model) => model !== "");

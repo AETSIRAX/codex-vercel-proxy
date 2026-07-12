@@ -10,10 +10,13 @@ public/index.html            前端控制面板，手动输入当前 ADMIN KEY �
 src/index.ts                 路由、CORS、接口分发
 src/auth.ts                  Proxy/Admin/Cron 鉴权
 src/codex.ts                 Responses 代理、上游请求、凭证轮换
+src/codex-endpoint.ts        Codex 扩展端点路径与公共请求头构造
+src/codex-payload.ts         请求规范化与 GPT-5.6 Responses Lite 适配
 src/codex-affinity.ts        Codex 会话粘连凭据选择
 src/codex-identity.ts        Codex 客户端标识混淆与恢复
 src/codex-oauth.ts           Codex OAuth 登录（PKCE、授权码交换、凭证映射）
 src/chat.ts                  Chat Completions 到 Responses 的转换
+src/chat-payload.ts          Chat 请求字段兼容转换
 src/credential-manager.ts    Postgres 凭证存储、刷新、状态维护
 src/crypto.ts                凭证加密和解密
 src/db.ts                    Postgres 共享连接
@@ -40,10 +43,11 @@ vercel.json                  Vercel Functions、Cron、rewrite 配置
    - `/cron/refresh` 使用 `CRON_SECRET`
    - `/cron/cleanup` 使用 `CRON_SECRET`
 4. `/v1/responses` 进入 `proxyResponses()`。
-5. `/v1/chat/completions` 先由 `chatToResponses()` 转成 Responses 请求，再复用 `proxyResponses` 的上游逻辑。
-6. `fetchCodexWithRotation()` 从 Postgres 选择可用凭证，失败时按状态切换凭证。
-7. 上游 Codex 总是使用 SSE 请求；下游非流式请求会在服务端聚合为 JSON。
-8. 请求结束后，`src/usage.ts` 通过 `waitUntil` 异步写入 `usage_events` 明细和 `usage_hourly` 小时聚合，不阻塞代理响应。
+5. `/v1/chat/completions` 先由 `chatToResponses()` 转成 Responses 请求，再复用 Responses 的上游逻辑。
+6. search、compact、images、memories 以及携带 `client_version` 的 models 请求进入 `proxyCodexJsonEndpoint()`，保持原生 JSON 格式并复用凭证轮换。
+7. `fetchCodexWithRotation()` 从 Postgres 选择可用凭证，失败时按状态切换凭证。
+8. Responses 上游使用 SSE 请求；下游非流式 Responses 会在服务端聚合为 JSON，扩展端点直接转发 JSON 响应流。
+9. Responses 和 Chat 请求结束后，`src/usage.ts` 通过 `waitUntil` 异步写入 `usage_events` 明细和 `usage_hourly` 小时聚合，不阻塞代理响应。
 
 ## 环境变量
 
@@ -54,7 +58,7 @@ vercel.json                  Vercel Functions、Cron、rewrite 配置
 | `ADMIN_TOKEN` | 首次初始化 | `/admin/*` 管理接口访问密钥，后续可在控制面板更新 |
 | `CRON_SECRET` | 是 | `/cron/refresh` 和 `/cron/cleanup` 定时任务密钥 |
 | `CRED_ENCRYPTION_KEY` | 是 | 凭证加密密钥，建议使用长随机字符串 |
-| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-5.5,gpt-5.4` |
+| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4` |
 | `USER_AGENT` | 否 | 请求上游 Codex 的 User-Agent |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
@@ -70,8 +74,8 @@ PROXY_API_KEY=replace-with-local-proxy-key
 ADMIN_TOKEN=replace-with-local-admin-token
 CRON_SECRET=replace-with-local-cron-secret
 CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
-MODELS=gpt-5.4,gpt-5.5
-USER_AGENT="codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)"
+MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4
+USER_AGENT="codex-tui/0.144.1 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.144.1)"
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
 REFRESH_LEAD_SECONDS=172800
 REFRESH_MIN_INTERVAL_SECONDS=300
@@ -245,15 +249,19 @@ Responses 入口会在转发前执行以下处理：
 - `input` 为字符串时转成 user message
 - 强制 `stream=true`
 - 强制 `store=false`
-- 强制 `parallel_tool_calls=true`
+- 强制 `parallel_tool_calls=true`（GPT-5.6 系列除外，见下）
 - 仅当请求包含 `reasoning` 时携带 `include=["reasoning.encrypted_content"]`
-- 删除 `previous_response_id`、`prompt_cache_retention`、`safety_identifier`、`stream_options`
+- 删除 `previous_response_id`、`prompt_cache_retention`、`safety_identifier`
 - 删除 `max_output_tokens`、`max_completion_tokens`、`max_tokens`、`temperature`、`top_p`
 - 删除 `truncation`、`context_management`、`user`
 - `service_tier` 由控制面板 Fast mode 决定；开启时写入 `priority`，关闭时不发送该字段
 - `input[].role="system"` 改为 `developer`
 - `web_search_preview` 和 `web_search_preview_2025_03_11` 改为 `web_search`
 - `instructions` 缺失或为 `null` 时改为空字符串
+- `reasoning.effort="ultra"` 改为 `max`（`ultra` 是 Codex 客户端本地思考等级，上游线上取值最高为 `max`）
+- `stream_options` 只保留 `reasoning_summary_delivery="sequential_cutoff"`，其他值和额外字段删除
+- GPT-5.6 系列（`gpt-5.6*`，Responses Lite 模型）额外处理：`parallel_tool_calls` 固定为 `false`；`reasoning.context` 缺省时补为 `all_turns`；`input` 中没有 `additional_tools` 项时，顶层 `tools` 里的 `function`、`custom` 工具转成 `additional_tools` 项、非空 `instructions` 转成 developer message 一起前置到 `input`，已发送 `additional_tools` 项的 lite-aware 客户端输入保持原样。`web_search` 等托管工具保留在顶层：lite 上游只支持客户端执行的工具，托管工具会被上游以 `400 unsupported_value` 明确拒绝，避免静默失效
+- GPT-5.6 系列会删除 message、`function_call_output`、`custom_tool_call_output` 图片内容中的 `detail`
 - `prompt_cache_key` 显式传入时保留；缺省时按客户端代理密钥生成稳定 UUID，并作为默认上游 `session-id`、`thread-id`
 - Identity confuse 开启时，请求体、请求头、`client_metadata` 和 turn metadata 中的 Codex 身份投影会按当前上游凭据生成稳定替代值；响应只恢复结构化身份字段，普通输出文本不执行替换
 - 多凭据场景按 Codex 会话头做凭据粘连；粘连键只来自 `session-id`，没有该头时使用 `thread-id`，凭据不可用或上游返回可轮换错误时才切换备用凭据
@@ -263,12 +271,14 @@ Responses 入口会在转发前执行以下处理：
 - `session-id` 和 `thread-id` 显式传入时使用请求头值；否则使用 `prompt_cache_key` 或代理自动生成的稳定 UUID
 - `x-client-request-id` 显式传入时作为上游 `X-Client-Request-Id`；否则使用当前 `thread-id`
 - `originator` 显式传入时透传；否则使用 `codex_cli_rs`
-- `version`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features` 存在时透传
+- `version` 显式传入时透传；否则默认发送 `0.144.1`（GPT-5.6 上游要求客户端版本不低于 `0.144.0`）
+- `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-openai-internal-codex-responses-lite` 存在时透传；GPT-5.6 系列模型固定携带 `x-openai-internal-codex-responses-lite: true`
 - Identity confuse 开启时，session、thread、request、window、parent thread、installation 及 turn metadata 中的身份字段会统一改写；非法 `x-codex-turn-metadata` 返回 `400 invalid_codex_identity`
 
 Chat Completions 入口会先转成 Responses：
 
 - `system` message 转成 `developer` message
+- 顶层 `verbosity` 转成 `text.verbosity`，缺失时兼容读取 `text.verbosity`
 - `assistant` message 使用 `output_text`
 - `user` message 使用 `input_text`
 - `image_url` 转成 `input_image`
@@ -277,7 +287,7 @@ Chat Completions 入口会先转成 Responses：
 - `assistant.tool_calls` 转成顶层 `function_call`
 - function tools 从 Chat Completions 嵌套格式展平成 Responses 格式
 - function 名称超过 64 个字符时会截断；`mcp__...__tool` 会优先保留最后的 tool 名称
-- 传入 `reasoning` 时原样转发；仅传入 `reasoning_effort` 时转成 `reasoning.effort` 并补 `reasoning.summary="auto"`
+- 传入 `reasoning` 时原样转发；仅传入 `reasoning_effort` 时转成 `reasoning.effort` 并补 `reasoning.summary="auto"`（GPT-5.6 系列不补 `summary`，上游默认无 reasoning summary）
 - 未传入 `model` 时使用 `MODELS` 中的第一项
 - 显式传入的 `prompt_cache_key` 会保留到 Responses 请求体
 

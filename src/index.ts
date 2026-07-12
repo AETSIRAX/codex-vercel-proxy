@@ -1,6 +1,7 @@
 import { requireAdminAuth, requireCronAuth, requireProxyAuth } from "./auth.js";
 import { proxyChatCompletions } from "./chat.js";
-import { proxyResponses } from "./codex.js";
+import { proxyCodexJsonEndpoint, proxyResponses } from "./codex.js";
+import { resolveCodexJsonPostEndpoint } from "./codex-endpoint.js";
 import { completeCodexOAuth, startCodexOAuth } from "./codex-oauth.js";
 import { credentialManager } from "./credential-manager.js";
 import { database } from "./db.js";
@@ -20,7 +21,8 @@ import {
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization,content-type,x-api-key,x-client-request-id,session-id,thread-id,x-codex-turn-state,x-codex-turn-metadata,x-codex-window-id,x-codex-parent-thread-id,x-codex-installation-id,x-codex-beta-features,originator,version",
+    "authorization,content-type,if-none-match,x-api-key,x-client-request-id,x-oai-attestation,x-openai-memgen-request,x-openai-subagent,session-id,thread-id,x-codex-turn-state,x-codex-turn-metadata,x-codex-window-id,x-codex-parent-thread-id,x-codex-installation-id,x-codex-beta-features,x-openai-internal-codex-responses-lite,originator,version",
+  "Access-Control-Expose-Headers": "etag,x-codex-turn-state",
   "Access-Control-Allow-Methods": "GET,POST,DELETE,HEAD,OPTIONS",
 };
 const DEFAULT_USAGE_RANGE_MS = 24 * 60 * 60 * 1000;
@@ -76,6 +78,19 @@ async function handleOpenAI(request: Request, env: AppEnv, url: URL): Promise<Re
     return authError;
   }
   if (url.pathname === "/v1/models" && request.method === "GET") {
+    if (url.searchParams.has("client_version")) {
+      const clientVersion = stringValue(url.searchParams.get("client_version"));
+      if (clientVersion === undefined) {
+        return errorResponse(400, "client_version must not be empty", "invalid_request");
+      }
+      return proxyCodexJsonEndpoint(
+        request,
+        env,
+        "models",
+        undefined,
+        new URLSearchParams({ client_version: clientVersion }),
+      );
+    }
     return jsonResponse({
       object: "list",
       data: configuredModels(env).map((id) => ({
@@ -91,6 +106,10 @@ async function handleOpenAI(request: Request, env: AppEnv, url: URL): Promise<Re
   }
   if (url.pathname === "/v1/chat/completions" && request.method === "POST") {
     return proxyChatCompletions(request, env, await readJsonObject(request));
+  }
+  const codexEndpoint = resolveCodexJsonPostEndpoint(url.pathname, request.method);
+  if (codexEndpoint !== undefined) {
+    return proxyCodexJsonEndpoint(request, env, codexEndpoint, await readJsonObject(request));
   }
   return errorResponse(404, "route not found", "not_found");
 }

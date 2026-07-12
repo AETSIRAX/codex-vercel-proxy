@@ -80,7 +80,9 @@ curl -i "https://<vercel-domain>/healthz"
 
 ## GET /v1/models
 
-返回 `MODELS` 环境变量配置的模型列表。未配置时默认返回 `gpt-5.5,gpt-5.4`。
+普通请求返回 `MODELS` 环境变量配置的 OpenAI 格式模型列表。未配置时默认返回 `gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4`。
+
+Codex CLI 携带 `client_version` 查询参数时，请求会转发到 Codex 原生 `/models` 端点，响应保持 `{"models":[...]}` 格式，并透传 `If-None-Match`/`ETag` 缓存语义。
 
 请求：
 
@@ -96,6 +98,24 @@ curl "https://<vercel-domain>/v1/models" \
   "object": "list",
   "data": [
     {
+      "id": "gpt-5.6-sol",
+      "object": "model",
+      "created": 0,
+      "owned_by": "codex"
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "object": "model",
+      "created": 0,
+      "owned_by": "codex"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "object": "model",
+      "created": 0,
+      "owned_by": "codex"
+    },
+    {
       "id": "gpt-5.5",
       "object": "model",
       "created": 0,
@@ -110,6 +130,20 @@ curl "https://<vercel-domain>/v1/models" \
   ]
 }
 ```
+
+## Codex 后端扩展接口
+
+以下接口选择 Codex 凭证、附加 ChatGPT 账号头，并沿用 `401`、`403`、`429`、`5xx` 凭证轮换规则：
+
+| 代理路径 | 上游路径 | 用途 |
+| --- | --- | --- |
+| `POST /v1/alpha/search` | `alpha/search` | Codex 独立搜索工具 |
+| `POST /v1/responses/compact` | `responses/compact` | 旧版远程上下文压缩 |
+| `POST /v1/images/generations` | `images/generations` | 图片生成 |
+| `POST /v1/images/edits` | `images/edits` | 图片编辑 |
+| `POST /v1/memories/trace_summarize` | `memories/trace_summarize` | memories 摘要 |
+
+请求体和成功响应保持 Codex 原生 JSON 格式。`/v1/responses/compact` 主要用于旧版 CLI 或关闭 `remote_compaction_v2` 的配置；当前 CLI 默认通过常规 `/v1/responses` 完成 V2 压缩。
 
 ## POST /v1/responses
 
@@ -188,13 +222,15 @@ data: {"type":"response.completed","response":{...}}
 | `input` 字符串 | 转为 `[{type:"message",role:"user",content:[...]}]` |
 | `stream` | 强制上游为 `true` |
 | `store` | 强制为 `false` |
-| `parallel_tool_calls` | 强制为 `true` |
+| `parallel_tool_calls` | 强制为 `true`；Responses Lite 模型固定为 `false` |
 | `include` | 仅在请求包含 `reasoning` 时包含 `["reasoning.encrypted_content"]` |
 | `prompt_cache_key` | 显式传入时原样保留；缺省时按代理密钥生成稳定 UUID，并作为默认上游 `session-id`、`thread-id` |
 | `input[].role="system"` | 改为 `developer` |
 | `instructions` 缺失或 `null` | 改为空字符串 |
 | `web_search_preview`、`web_search_preview_2025_03_11` | 改为 `web_search` |
 | `service_tier` | 由控制面板 Fast mode 决定；开启时写入 `priority`，关闭时不发送该字段 |
+| `stream_options.reasoning_summary_delivery` | 仅保留 Codex 当前支持的 `sequential_cutoff`，删除其他值和额外字段 |
+| 图片 `detail` | Responses Lite 请求会从 message、`function_call_output`、`custom_tool_call_output` 的 `input_image` 中删除 |
 | Codex identity | 开启 Identity confuse 后，发往上游前按当前 Codex 凭据改写稳定客户端标识，返回客户端前恢复原值 |
 
 以下字段会被删除：
@@ -203,7 +239,6 @@ data: {"type":"response.completed","response":{...}}
 previous_response_id
 prompt_cache_retention
 safety_identifier
-stream_options
 max_output_tokens
 max_completion_tokens
 max_tokens
@@ -221,7 +256,7 @@ user
 - `session-id` 和 `thread-id`：客户端显式传入时使用请求头值；否则使用 `prompt_cache_key` 或代理按 API KEY 生成的稳定 UUID。
 - `X-Client-Request-Id`：客户端显式传入 `x-client-request-id` 时使用该值；否则使用当前 `thread-id`。
 - `originator`：客户端显式传入时使用该值；否则为 `codex_cli_rs`。
-- `version`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`：存在时透传给上游。
+- `version`、`x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`：存在时透传给上游。
 - Identity confuse 开启时，请求体 `prompt_cache_key`，请求头中的 session、thread、request、window、parent thread 和 installation 标识，以及 `client_metadata`、turn metadata 中对应的身份投影都会使用按当前上游凭据生成的稳定替代值。同一原始标识在各个投影中复用相同替代值，window ID 保留 generation 后缀。响应只恢复结构化身份字段，不修改 assistant 文本、reasoning 或工具参数。无法解析为 JSON 对象的 `x-codex-turn-metadata` 会返回 `400 invalid_codex_identity`。
 
 多凭据场景下，服务会按 Codex 会话头选择 Codex 凭据。粘连键只来自 `session-id`，没有该头时使用 `thread-id`；没有这两个请求头时保留原有按 `last_used_at` 选择凭据的行为。同一粘连键通常会落到同一凭据，凭据不可用或上游返回可轮换错误时才切换备用凭据。
@@ -229,6 +264,8 @@ user
 ## POST /v1/chat/completions
 
 OpenAI Chat Completions 兼容入口。服务会把请求转换为 Responses 请求，再调用 Codex。
+
+顶层 `verbosity` 会映射到 Responses 的 `text.verbosity`。为兼容 Responses 风格客户端，也继续接受 `text.verbosity`；两者同时存在时使用顶层值。
 
 如果请求没有传入 `model`，服务会使用 `MODELS` 中的第一项作为默认模型。
 
