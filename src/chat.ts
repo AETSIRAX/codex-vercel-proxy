@@ -10,11 +10,6 @@ import {
 } from "./codex.js";
 import { isResponsesLiteModel, prepareCodexPayload } from "./codex-payload.js";
 import { resolveChatVerbosity } from "./chat-payload.js";
-import {
-  applyCodexIdentityExposeHeaders,
-  applyCodexIdentityExposeJson,
-  type CodexIdentityState,
-} from "./codex-identity.js";
 import { credentialManager, scheduleCredentialRateLimitUpdate } from "./credential-manager.js";
 import { configuredModels, type AppEnv } from "./env.js";
 import { settingsStore } from "./settings.js";
@@ -34,7 +29,7 @@ export async function proxyChatCompletions(request: Request, env: AppEnv, input:
     model: modelName,
     stream: wantsStream,
   });
-  const upstream = await fetchCodexWithRotation(request, env, responsesPayload, true, settings);
+  const upstream = await fetchCodexWithRotation(request, env, responsesPayload, true);
   if (upstream instanceof Response) {
     scheduleUsageRecord(env, usageContext, {
       statusCode: upstream.status,
@@ -50,7 +45,6 @@ export async function proxyChatCompletions(request: Request, env: AppEnv, input:
       env,
       upstream.credential,
       usageContext,
-      upstream.identityState,
     );
   }
   if (!upstream.response.body) {
@@ -70,9 +64,7 @@ export async function proxyChatCompletions(request: Request, env: AppEnv, input:
   let completed: JsonObject | undefined;
   try {
     for await (const event of readSseData(upstream.response.body)) {
-      const upstreamEvent = parseSseJson(event.data);
-      const parsed =
-        upstreamEvent === undefined ? undefined : applyCodexIdentityExposeJson(upstreamEvent, upstream.identityState);
+      const parsed = parseSseJson(event.data);
       if (parsed) {
         collectOutputItem(parsed, outputItems);
       }
@@ -587,10 +579,8 @@ function streamChat(
   env: AppEnv,
   credential: SelectedCredential,
   usageContext: UsageContext,
-  identityState: CodexIdentityState,
 ): Response {
   const headers = new Headers(response.headers);
-  applyCodexIdentityExposeHeaders(headers, identityState);
   headers.set("Content-Type", "text/event-stream; charset=utf-8");
   headers.set("Cache-Control", "no-cache");
   headers.delete("content-length");
@@ -631,8 +621,7 @@ function streamChat(
       );
       try {
         for await (const event of readSseData(response.body)) {
-          const upstreamEvent = parseSseJson(event.data);
-          const parsed = upstreamEvent === undefined ? undefined : applyCodexIdentityExposeJson(upstreamEvent, identityState);
+          const parsed = parseSseJson(event.data);
           if (!parsed) {
             continue;
           }

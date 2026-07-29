@@ -4,6 +4,7 @@ export interface AppEnv {
   [key: string]: string | undefined;
   ADMIN_TOKEN?: string;
   CRED_ENCRYPTION_KEY?: string;
+  CODEX_CLI_VERSION?: string;
   CRON_SECRET?: string;
   DATABASE_URL?: string;
   FAILURE_COOLDOWN_SECONDS?: string;
@@ -13,13 +14,13 @@ export interface AppEnv {
   REFRESH_LEAD_SECONDS?: string;
   REFRESH_LOCK_SECONDS?: string;
   REFRESH_MIN_INTERVAL_SECONDS?: string;
-  USER_AGENT?: string;
 }
 
 export const CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
-// gpt-5.6 models require codex client version >= 0.144.0 upstream.
-export const DEFAULT_CODEX_CLI_VERSION = "0.144.1";
-const DEFAULT_USER_AGENT = `codex-tui/${DEFAULT_CODEX_CLI_VERSION} (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; ${DEFAULT_CODEX_CLI_VERSION})`;
+// Exact CLI version bundled with the currently verified Codex App. Requests from
+// Codex clients keep their own Version header, so App upgrades do not depend on
+// this default being updated first.
+export const DEFAULT_CODEX_CLI_VERSION = "0.146.0-alpha.3.1";
 
 export function loadEnv(): AppEnv {
   return process.env;
@@ -51,6 +52,10 @@ export function configuredModels(env: AppEnv): string[] {
     .filter((model) => model !== "");
 }
 
-export function userAgent(env: AppEnv): string {
-  return env.USER_AGENT || DEFAULT_USER_AGENT;
+export function codexClientVersion(env: AppEnv, source?: Headers): string {
+  return source?.get("version")?.trim() || envString(env, "CODEX_CLI_VERSION") || DEFAULT_CODEX_CLI_VERSION;
+}
+
+export function userAgent(env: AppEnv, source?: Headers): string {
+  return source?.get("user-agent")?.trim() || `codex_cli_rs/${codexClientVersion(env, source)}`;
 }

@@ -5,20 +5,11 @@ import {
   buildCodexRequestHeaders,
   type CodexJsonEndpointPath,
 } from "./codex-endpoint.js";
-import {
-  applyCodexIdentityConfuseHeaders,
-  applyCodexIdentityConfusePayload,
-  applyCodexIdentityExposeHeaders,
-  applyCodexIdentityExposeJson,
-  applyCodexIdentityExposeText,
-  CodexIdentityInputError,
-  type CodexIdentityState,
-} from "./codex-identity.js";
 import { codexBaseURL } from "./env.js";
 import type { AppEnv } from "./env.js";
 import { isResponsesLiteModel, prepareCodexPayload } from "./codex-payload.js";
 import { isUsageLimitErrorType, parseRateLimitHeaders } from "./rate-limits.js";
-import { settingsStore, type ProxySettings } from "./settings.js";
+import { settingsStore } from "./settings.js";
 import { readSseData, encodeSseData, parseSseJson } from "./sse.js";
 import type { JsonObject, JsonValue, SelectedCredential } from "./types.js";
 import { createUsageContext, scheduleUsageRecord, type UsageContext } from "./usage.js";
@@ -49,12 +40,6 @@ export interface ResponseStreamError {
 interface UpstreamResult {
   response: Response;
   credential: SelectedCredential;
-  identityState: CodexIdentityState;
-}
-
-interface UpstreamFetchResult {
-  response: Response;
-  identityState: CodexIdentityState;
 }
 
 interface RequestIdentity {
@@ -80,7 +65,7 @@ export async function proxyResponses(request: Request, env: AppEnv, input: JsonO
     model: stringValue(payload.model),
     stream: wantsStream,
   });
-  const upstream = await fetchCodexWithRotation(request, env, payload, true, settings);
+  const upstream = await fetchCodexWithRotation(request, env, payload, true);
   if (upstream instanceof Response) {
     scheduleUsageRecord(env, usageContext, {
       statusCode: upstream.status,
@@ -89,9 +74,9 @@ export async function proxyResponses(request: Request, env: AppEnv, input: JsonO
     return upstream;
   }
   if (wantsStream) {
-    return streamResponses(upstream.response, upstream.credential, env, usageContext, upstream.identityState);
+    return streamResponses(upstream.response, upstream.credential, env, usageContext);
   }
-  return aggregateResponses(upstream.response, upstream.credential, env, usageContext, upstream.identityState);
+  return aggregateResponses(upstream.response, upstream.credential, env, usageContext);
 }
 
 export async function proxyCodexJsonEndpoint(
@@ -165,7 +150,6 @@ export async function fetchCodexWithRotation(
   env: AppEnv,
   payload: JsonObject,
   stream: boolean,
-  settings: ProxySettings,
 ): Promise<UpstreamResult | Response> {
   const manager = credentialManager(env);
   const excluded: string[] = [];
@@ -184,26 +168,18 @@ export async function fetchCodexWithRotation(
       return errorResponse(503, "no available codex credential", "credential_unavailable");
     }
 
-    let upstream: UpstreamFetchResult;
-    try {
-      upstream = await fetchCodexOnce(request, env, credential, payload, stream, identity, settings);
-    } catch (error) {
-      if (error instanceof CodexIdentityInputError) {
-        return errorResponse(400, error.message, "invalid_codex_identity");
-      }
-      throw error;
-    }
-    if (upstream.response.ok) {
-      scheduleCredentialSuccessUpdate(env, credential.id, upstream.response.status);
-      return { response: upstream.response, credential, identityState: upstream.identityState };
+    const upstream = await fetchCodexOnce(request, env, credential, payload, stream, identity);
+    if (upstream.ok) {
+      scheduleCredentialSuccessUpdate(env, credential.id, upstream.status);
+      return { response: upstream, credential };
     }
 
-    const body = applyCodexIdentityExposeText(await upstream.response.text(), upstream.identityState);
-    const retryAfter = retryAfterSeconds(upstream.response.headers.get("retry-after"));
+    const body = await upstream.text();
+    const retryAfter = retryAfterSeconds(upstream.headers.get("retry-after"));
     const error = summarizeErrorBody(body);
     const usageErrorType = usageLimitErrorType(error.errorType, error.code);
-    let rateLimits = parseRateLimitHeaders(upstream.response.headers);
-    if (upstream.response.status === 429 && usageErrorType !== undefined) {
+    let rateLimits = parseRateLimitHeaders(upstream.headers);
+    if (upstream.status === 429 && usageErrorType !== undefined) {
       try {
         rateLimits = await manager.refreshRateLimits(credential);
       } catch (error) {
@@ -212,18 +188,17 @@ export async function fetchCodexWithRotation(
     }
     await manager.reportResult(credential.id, {
       ok: false,
-      status: upstream.response.status,
+      status: upstream.status,
       retryAfterSeconds: retryAfter,
       errorType: usageErrorType ?? error.errorType ?? error.code,
       message: error.message,
       rateLimits: rateLimits.length > 0 ? rateLimits : undefined,
     });
-    const headers = new Headers(upstream.response.headers);
-    applyCodexIdentityExposeHeaders(headers, upstream.identityState);
+    const headers = new Headers(upstream.headers);
     headers.delete("content-length");
-    lastError = new Response(body, { status: upstream.response.status, headers });
+    lastError = new Response(body, { status: upstream.status, headers });
     excluded.push(credential.id);
-    if (!isRotatableStatus(upstream.response.status)) {
+    if (!isRotatableStatus(upstream.status)) {
       return lastError;
     }
   }
@@ -238,11 +213,8 @@ async function fetchCodexOnce(
   payload: JsonObject,
   stream: boolean,
   identity: RequestIdentity,
-  settings: ProxySettings,
-): Promise<UpstreamFetchResult> {
+): Promise<Response> {
   const baseURL = codexBaseURL();
-  const upstreamPayload = structuredClone(payload) as JsonObject;
-  const identityState = await applyCodexIdentityConfusePayload(settings, credential, payload, upstreamPayload);
   const headers = buildCodexRequestHeaders(
     request,
     env,
@@ -250,7 +222,7 @@ async function fetchCodexOnce(
     stream ? "text/event-stream" : "application/json",
     true,
   );
-  if (isResponsesLiteModel(stringValue(upstreamPayload.model))) {
+  if (isResponsesLiteModel(stringValue(payload.model))) {
     headers.set("X-OpenAI-Internal-Codex-Responses-Lite", "true");
   }
   const sessionId = request.headers.get("session-id")?.trim() || identity.sessionId;
@@ -259,13 +231,11 @@ async function fetchCodexOnce(
   headers.set("originator", request.headers.get("originator")?.trim() || "codex_cli_rs");
   headers.set("session-id", sessionId);
   headers.set("thread-id", threadId);
-  await applyCodexIdentityConfuseHeaders(headers, identityState);
-  const response = await fetch(`${baseURL}/responses`, {
+  return fetch(`${baseURL}/responses`, {
     method: "POST",
     headers,
-    body: JSON.stringify(upstreamPayload),
+    body: JSON.stringify(payload),
   });
-  return { response, identityState };
 }
 
 async function fetchCodexJsonEndpointOnce(
@@ -411,7 +381,6 @@ async function aggregateResponses(
   credential: SelectedCredential,
   env: AppEnv,
   usageContext: UsageContext,
-  identityState: CodexIdentityState,
 ): Promise<Response> {
   const manager = credentialManager(env);
   if (!response.body) {
@@ -432,8 +401,7 @@ async function aggregateResponses(
   let completed: JsonObject | undefined;
   try {
     for await (const event of readSseData(response.body)) {
-      const upstreamEvent = parseSseJson(event.data);
-      const parsed = upstreamEvent === undefined ? undefined : applyCodexIdentityExposeJson(upstreamEvent, identityState);
+      const parsed = parseSseJson(event.data);
       if (!parsed) {
         continue;
       }
@@ -494,11 +462,9 @@ function streamResponses(
   credential: SelectedCredential,
   env: AppEnv,
   usageContext: UsageContext,
-  identityState: CodexIdentityState,
 ): Response {
   const manager = credentialManager(env);
   const headers = new Headers(response.headers);
-  applyCodexIdentityExposeHeaders(headers, identityState);
   headers.set("Content-Type", "text/event-stream; charset=utf-8");
   headers.set("Cache-Control", "no-cache");
   headers.delete("content-length");
@@ -512,8 +478,7 @@ function streamResponses(
           throw new Error("upstream response body is empty");
         }
         for await (const event of readSseData(response.body)) {
-          const upstreamEvent = parseSseJson(event.data);
-          const parsed = upstreamEvent === undefined ? undefined : applyCodexIdentityExposeJson(upstreamEvent, identityState);
+          const parsed = parseSseJson(event.data);
           if (!parsed) {
             controller.enqueue(encodeSseData(event.data));
             continue;

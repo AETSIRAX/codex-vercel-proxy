@@ -4,7 +4,7 @@ Codex Vercel Proxy 是一个部署在 Vercel Functions 上的 Codex 代理服务
 
 项目同时提供一个单文件 Web 控制面板，用于导入、查看、启用、禁用、刷新和删除凭证，并展示请求用量、模型排行、凭据维度、访问方维度和请求明细。
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAETSIRAX%2Fcodex-vercel-proxy&project-name=codex-vercel-proxy&repository-name=codex-vercel-proxy&env=DATABASE_URL,PROXY_API_KEY,ADMIN_TOKEN,CRON_SECRET,CRED_ENCRYPTION_KEY&envDescription=请填写%20Postgres%20连接串、初始%20PROXY_API_KEY、初始%20ADMIN_TOKEN、CRON_SECRET%20和%20CRED_ENCRYPTION_KEY。MODELS、USER_AGENT%20等变量可在部署后按需配置。)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAETSIRAX%2Fcodex-vercel-proxy&project-name=codex-vercel-proxy&repository-name=codex-vercel-proxy&env=DATABASE_URL,PROXY_API_KEY,ADMIN_TOKEN,CRON_SECRET,CRED_ENCRYPTION_KEY&envDescription=请填写%20Postgres%20连接串、初始%20PROXY_API_KEY、初始%20ADMIN_TOKEN、CRON_SECRET%20和%20CRED_ENCRYPTION_KEY。MODELS、CODEX_CLI_VERSION%20等变量可在部署后按需配置。)
 
 ## 控制面板预览
 
@@ -27,7 +27,7 @@ Codex Vercel Proxy 是一个部署在 Vercel Functions 上的 Codex 代理服务
 - 缓存路由：保留 `prompt_cache_key`，缺省时自动为 Codex 请求生成稳定缓存键
 - 用量统计：记录请求耗时、模型、凭证、缓存 token、思考 token 和汇总数据
 - 用量分析：控制面板支持按 24 小时、7 天、30 天查看请求走势和聚合排行
-- 请求配置：控制面板可切换 Fast mode、Identity confuse，并按行新增、替换、删除代理 API KEY 和 ADMIN KEY
+- 请求配置：控制面板可切换 Fast mode，并按行新增、替换、删除代理 API KEY 和 ADMIN KEY
 - 加密存储：凭证私密字段使用 `CRED_ENCRYPTION_KEY` 加密后写入 Postgres
 - 控制面板：访问 `/` 或 `/dashboard`，手动输入当前 ADMIN KEY 后管理凭证
 - 健康检查：公开 `/healthz` 端点，检查关键环境变量、数据库连通性和已配置密钥
@@ -58,7 +58,6 @@ src/index.ts
   +-- src/chat.ts                 Chat Completions 转 Responses
   +-- src/codex-affinity.ts       Codex 会话粘连凭据选择
   +-- src/codex-endpoint.ts       Codex 扩展端点路由与公共请求头
-  +-- src/codex-identity.ts       Codex 客户端标识混淆与恢复
   +-- src/codex-oauth.ts          Codex OAuth 登录（PKCE、授权码交换）
   +-- src/codex-payload.ts        请求规范化与 GPT-5.6 Responses Lite 适配
   +-- src/chat-payload.ts         Chat 请求字段兼容转换
@@ -92,14 +91,14 @@ Codex upstream / Postgres
 | `CRON_SECRET` | 是 | `/cron/refresh` 和 `/cron/cleanup` 定时任务接口密钥 |
 | `CRED_ENCRYPTION_KEY` | 是 | 凭证加密密钥，建议使用长随机字符串 |
 | `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4` |
-| `USER_AGENT` | 否 | 请求上游 Codex 时使用的 User-Agent |
+| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `version` 时使用的 Codex CLI 版本，默认 `0.146.0-alpha.3.1` |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
 | `REFRESH_MIN_INTERVAL_SECONDS` | 否 | 强制刷新最小间隔，默认 `300` |
 | `FAILURE_COOLDOWN_SECONDS` | 否 | 凭证失败后的通用冷却时间，默认 `300`；usage limit 命中或配额剩余低于 10% 时优先使用上游配额重置时间 |
 | `REFRESH_LOCK_SECONDS` | 否 | 单条凭证刷新锁时间，默认 `120` |
 
-`PROXY_API_KEY` 和 `ADMIN_TOKEN` 是首次创建 `proxy_settings` 时使用的初始值。部署后可以在控制面板的“配置”页修改 API KEY、ADMIN KEY、Fast mode 和 Identity confuse，后续鉴权会以数据库中的当前配置为准。
+`PROXY_API_KEY` 和 `ADMIN_TOKEN` 是首次创建 `proxy_settings` 时使用的初始值。部署后可以在控制面板的“配置”页修改 API KEY、ADMIN KEY 和 Fast mode，后续鉴权会以数据库中的当前配置为准。
 
 ### 手动部署
 
@@ -119,7 +118,7 @@ npx vercel env add ADMIN_TOKEN production
 npx vercel env add CRON_SECRET production
 npx vercel env add CRED_ENCRYPTION_KEY production
 npx vercel env add MODELS production
-npx vercel env add USER_AGENT production
+npx vercel env add CODEX_CLI_VERSION production
 npx vercel env add RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS production
 npx vercel env add REFRESH_LEAD_SECONDS production
 npx vercel env add REFRESH_MIN_INTERVAL_SECONDS production
@@ -127,7 +126,7 @@ npx vercel env add FAILURE_COOLDOWN_SECONDS production
 npx vercel env add REFRESH_LOCK_SECONDS production
 ```
 
-其中 `PROXY_API_KEY` 和 `ADMIN_TOKEN` 用作首次初始化密钥；`MODELS`、`USER_AGENT` 和刷新/冷却相关变量是可选配置。
+其中 `PROXY_API_KEY` 和 `ADMIN_TOKEN` 用作首次初始化密钥；`MODELS`、`CODEX_CLI_VERSION` 和刷新/冷却相关变量是可选配置。
 
 构建并发布：
 
@@ -152,7 +151,7 @@ ADMIN_TOKEN=replace-with-local-admin-token
 CRON_SECRET=replace-with-local-cron-secret
 CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
 MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4
-USER_AGENT="codex-tui/0.144.1 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.144.1)"
+CODEX_CLI_VERSION=0.146.0-alpha.3.1
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
 REFRESH_LEAD_SECONDS=172800
 REFRESH_MIN_INTERVAL_SECONDS=300
@@ -321,7 +320,7 @@ GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`）在上游使
 - 顶层 `tools` 中的 `function`、`custom` 工具和非空 `instructions` 会移入 `input`，分别转换为 `additional_tools` 项和 developer 消息；如果客户端（如 Codex CLI 0.144+）已经发送 `additional_tools` 项，输入保持原样；
 - Responses Lite 上游只支持客户端执行的工具，不支持 `web_search` 等托管工具：GPT-5.6 请求携带托管工具时上游会返回明确的 `400 unsupported_value`（Codex CLI 自己也不给 5.6 发托管搜索，其搜索由 CLI 本地 `web.run` 工具执行）。需要服务端 `web_search` 请使用 `gpt-5.5` 及更早模型；
 - 思考等级支持 `low`、`medium`、`high`、`xhigh`、`max`。`ultra` 是 Codex 客户端本地概念（max 推理加自动任务委派），代理与 Codex CLI 行为一致，将其映射为 `max` 后发送上游；
-- GPT-5.6 上游要求客户端版本不低于 `0.144.0`，客户端未携带 `version` 请求头时代理默认发送 `0.144.1`，默认 `USER_AGENT` 也已同步到该版本。
+- Codex App/CLI 传入的 `version` 和 `User-Agent` 会原样优先转发。普通客户端缺少这些标头时，代理使用 `CODEX_CLI_VERSION` 或当前核实的 CLI 默认版本 `0.146.0-alpha.3.1`，并生成 `codex_cli_rs/<有效版本>` 作为 User-Agent，不再伪装固定的操作系统和终端。旧的 `USER_AGENT` 环境变量不再参与请求构造。
 
 `gpt-5.5` 及更早模型不受以上适配影响，仍按原有方式转发。
 
@@ -331,9 +330,7 @@ GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`）在上游使
 
 客户端显式传入 `session-id` 或 `thread-id` 请求头时，这两个请求头会用于上游请求；`prompt_cache_key` 仍按请求体字段或代理自动生成值处理。服务还会透传 `version`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id` 和 `x-codex-beta-features`，`x-client-request-id` 缺省时使用当前 `thread-id`。
 
-开启 Identity confuse 后，服务会按当前上游 Codex 凭据为请求体 `prompt_cache_key`，请求头中的 session、thread、request、window、parent thread 和 installation 标识，以及 `client_metadata` 和 turn metadata 中对应的身份投影生成稳定替代值。同一原始标识在同一请求的各个投影中复用相同替代值，window ID 保留 context generation 后缀。替代值只发往上游，响应中的结构化身份字段会在返回客户端前恢复；assistant 文本、reasoning 和工具参数不会执行身份字符串替换。Identity confuse 开启时，无法解析为 JSON 对象的 `x-codex-turn-metadata` 会返回 `400 invalid_codex_identity`。
-
-多凭据场景下，服务会按 Codex 会话头做凭据粘连。粘连键只来自 `session-id`，没有该头时使用 `thread-id`；没有这两个请求头时保留原有按 `last_used_at` 选择凭据的行为。该凭据不可用或触发可轮换错误时，当前请求才会切到备用凭据。由于 Identity confuse 的上游缓存键仍按凭据派生，切换备用凭据会产生另一套上游缓存键。
+多凭据场景下，服务会按 Codex 会话头做凭据粘连。粘连键只来自 `session-id`，没有该头时使用 `thread-id`；没有这两个请求头时保留原有按 `last_used_at` 选择凭据的行为。该凭据不可用或触发可轮换错误时，当前请求才会切到备用凭据。
 
 配置多个 API KEY 时，每个 key 会得到独立的缓存身份和用量统计。数据库只保存 key 的 SHA-256，控制面板按当前配置中的 key 顺序展示脱敏后的访问 KEY 用量。
 
@@ -346,7 +343,7 @@ GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`）在上游使
 - `credentials`：保存加密后的凭证正文、启用状态、错误信息、刷新锁、配额快照、成功和失败计数
 - `usage_events`：保存最近请求明细，用于请求表格、错误率、平均耗时和 p95 分析
 - `usage_hourly`：保存小时聚合，用于请求走势、token 汇总、模型排行、凭据维度和访问 KEY 用量
-- `proxy_settings`：保存控制面板配置，包含 Fast mode、Identity confuse、代理 API KEY 哈希和 ADMIN KEY 哈希
+- `proxy_settings`：保存控制面板配置，包含 Fast mode、代理 API KEY 哈希和 ADMIN KEY 哈希
 
 `credentials.encrypted_json` 字段保存加密后的凭证正文，加密密钥来自 `CRED_ENCRYPTION_KEY`。成功请求完成后，服务会按 `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` 节流，用实际使用的账号查询 Codex `/wham/usage`，把当前配额窗口、剩余百分比所需的 `used_percent`、重置时间和 credits 信息写入 `credentials.rate_limits_json`；usage limit 失败路径会跳过节流并立即刷新。任意窗口剩余额度低于 10% 且存在未来重置时间时，服务会主动设置 `next_retry_at`。
 
@@ -387,7 +384,6 @@ src/codex.ts                 Responses 代理、上游请求、凭证轮换
 src/codex-endpoint.ts        Codex 扩展端点路径与公共请求头构造
 src/codex-payload.ts         请求规范化与 GPT-5.6 Responses Lite 适配
 src/codex-affinity.ts        Codex 会话粘连凭据选择
-src/codex-identity.ts        Codex 客户端标识混淆与恢复
 src/chat.ts                  Chat Completions 转 Responses
 src/chat-payload.ts          Chat 请求字段兼容转换
 src/credential-manager.ts    Postgres 凭证存储、刷新、状态维护

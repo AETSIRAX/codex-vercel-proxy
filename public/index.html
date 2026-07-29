@@ -2437,19 +2437,6 @@
               </div>
               <div class="setting-row">
                 <div>
-                  <div class="setting-title">Identity confuse</div>
-                  <div class="setting-copy">开启后按当前 Codex 凭据改写上游请求中的缓存键、会话头和 Codex 客户端标识，返回客户端前恢复原值。</div>
-                </div>
-                <div class="setting-control-group">
-                  <span class="badge disabled" id="identity-confuse-status">已关闭</span>
-                  <label class="switch" title="切换 Identity confuse">
-                    <input id="identity-confuse-toggle" type="checkbox" aria-label="Identity confuse" />
-                    <span class="switch-track" aria-hidden="true"></span>
-                  </label>
-                </div>
-              </div>
-              <div class="setting-row">
-                <div>
                   <div class="setting-title">API KEY</div>
                   <div class="setting-copy">当前代理访问密钥</div>
                   <div class="secret-key-list" id="settings-proxy-api-key-list"></div>
@@ -2669,8 +2656,6 @@
         settingsMeta: document.querySelector("#settings-meta"),
         fastModeToggle: document.querySelector("#fast-mode-toggle"),
         fastModeStatus: document.querySelector("#fast-mode-status"),
-        identityConfuseToggle: document.querySelector("#identity-confuse-toggle"),
-        identityConfuseStatus: document.querySelector("#identity-confuse-status"),
         settingsProxyApiKeyList: document.querySelector("#settings-proxy-api-key-list"),
         settingsApiKeyAddButton: document.querySelector("#settings-api-key-add-button"),
         settingsApiKeySaveButton: document.querySelector("#settings-api-key-save-button"),
@@ -2693,7 +2678,6 @@
         nodes.usageRefreshButton.addEventListener("click", () => loadUsage());
         nodes.refreshCredentialsButton.addEventListener("click", refreshCredentials);
         nodes.fastModeToggle.addEventListener("change", updateFastMode);
-        nodes.identityConfuseToggle.addEventListener("change", updateIdentityConfuse);
         nodes.settingsApiKeyAddButton.addEventListener("click", addProxyApiKeyDraftRow);
         nodes.settingsApiKeySaveButton.addEventListener("click", saveProxyApiKeySettings);
         nodes.settingsProxyApiKeyList.addEventListener("input", updateProxyApiKeyDraftValue);
@@ -2880,27 +2864,6 @@
           toast("配置已保存", `service_tier: ${state.settings.serviceTier}`, "ok");
         } catch (error) {
           nodes.fastModeToggle.checked = state.settings.fastMode;
-          setNotice("配置保存失败", "error");
-          toast("配置保存失败", errorMessage(error), "error");
-        } finally {
-          setBusy(false);
-          render();
-        }
-      }
-
-      async function updateIdentityConfuse() {
-        const identityConfuse = nodes.identityConfuseToggle.checked;
-        setBusy(true);
-        try {
-          requireAdminToken();
-          state.settings = normalizeSettings(await requestAdmin("/admin/settings", {
-            method: "POST",
-            body: { identityConfuse },
-          }));
-          setNotice(`Identity confuse 已${state.settings.identityConfuse ? "开启" : "关闭"}`, "ok");
-          toast("配置已保存", `identityConfuse: ${state.settings.identityConfuse}`, "ok");
-        } catch (error) {
-          nodes.identityConfuseToggle.checked = state.settings.identityConfuse;
           setNotice("配置保存失败", "error");
           toast("配置保存失败", errorMessage(error), "error");
         } finally {
@@ -3851,10 +3814,6 @@
         nodes.fastModeToggle.disabled = state.busy || !state.connected;
         nodes.fastModeStatus.textContent = state.settings.fastMode ? "已开启" : "已关闭";
         nodes.fastModeStatus.className = `badge ${state.settings.fastMode ? "ok" : "disabled"}`;
-        nodes.identityConfuseToggle.checked = state.settings.identityConfuse;
-        nodes.identityConfuseToggle.disabled = state.busy || !state.connected;
-        nodes.identityConfuseStatus.textContent = state.settings.identityConfuse ? "已开启" : "已关闭";
-        nodes.identityConfuseStatus.className = `badge ${state.settings.identityConfuse ? "ok" : "disabled"}`;
         nodes.settingsMeta.textContent = state.settings.updatedAt ? `更新 ${formatDate(state.settings.updatedAt)}` : "未同步";
         renderProxyApiKeyDraft();
         renderSecretList(nodes.settingsAdminTokenList, state.settings.adminToken ? [state.settings.adminToken] : [], "未配置 ADMIN KEY");
@@ -3950,7 +3909,6 @@
         syncPagerButtons(nodes.clientRankPrev, nodes.clientRankNext, pageBounds(state.usageSummary.byClient.length, "clientRankPage", state.rankPageSize));
         nodes.importButton.disabled = state.busy || importSources === 0;
         nodes.fastModeToggle.disabled = state.busy || !state.connected;
-        nodes.identityConfuseToggle.disabled = state.busy || !state.connected;
         nodes.settingsApiKeyAddButton.disabled = state.busy || !state.connected;
         nodes.settingsApiKeySaveButton.disabled = state.busy || !state.connected || !proxyApiKeyDraftReady() || !proxyApiKeyDraftChanged();
         nodes.settingsProxyApiKeyList.querySelectorAll("input, button").forEach((control) => {
@@ -4089,7 +4047,6 @@
         return {
           adminToken: normalizeKeyDisplay(input?.adminToken),
           fastMode,
-          identityConfuse: input?.identityConfuse === true,
           proxyApiKeys: normalizeKeyDisplays(input?.proxyApiKeys),
           serviceTier: input?.serviceTier || (fastMode ? "priority" : "default"),
           updatedAt: input?.updatedAt || "",
@@ -4100,7 +4057,6 @@
         return {
           adminToken: undefined,
           fastMode: true,
-          identityConfuse: false,
           proxyApiKeys: [],
           serviceTier: "priority",
           updatedAt: "",

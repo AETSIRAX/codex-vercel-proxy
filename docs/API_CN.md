@@ -231,7 +231,6 @@ data: {"type":"response.completed","response":{...}}
 | `service_tier` | 由控制面板 Fast mode 决定；开启时写入 `priority`，关闭时不发送该字段 |
 | `stream_options.reasoning_summary_delivery` | 仅保留 Codex 当前支持的 `sequential_cutoff`，删除其他值和额外字段 |
 | 图片 `detail` | Responses Lite 请求会从 message、`function_call_output`、`custom_tool_call_output` 的 `input_image` 中删除 |
-| Codex identity | 开启 Identity confuse 后，发往上游前按当前 Codex 凭据改写稳定客户端标识，返回客户端前恢复原值 |
 
 以下字段会被删除：
 
@@ -256,9 +255,9 @@ user
 - `session-id` 和 `thread-id`：客户端显式传入时使用请求头值；否则使用 `prompt_cache_key` 或代理按 API KEY 生成的稳定 UUID。
 - `X-Client-Request-Id`：客户端显式传入 `x-client-request-id` 时使用该值；否则使用当前 `thread-id`。
 - `originator`：客户端显式传入时使用该值；否则为 `codex_cli_rs`。
-- `version`、`x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`：存在时透传给上游。
-- Identity confuse 开启时，请求体 `prompt_cache_key`，请求头中的 session、thread、request、window、parent thread 和 installation 标识，以及 `client_metadata`、turn metadata 中对应的身份投影都会使用按当前上游凭据生成的稳定替代值。同一原始标识在各个投影中复用相同替代值，window ID 保留 generation 后缀。响应只恢复结构化身份字段，不修改 assistant 文本、reasoning 或工具参数。无法解析为 JSON 对象的 `x-codex-turn-metadata` 会返回 `400 invalid_codex_identity`。
-
+- `User-Agent`：客户端显式传入时原样转发；否则生成 `codex_cli_rs/<有效版本>`。旧的 `USER_AGENT` 环境变量不再参与请求构造。
+- `version`：客户端显式传入时原样转发；否则使用 `CODEX_CLI_VERSION`，未配置时使用当前默认版本 `0.146.0-alpha.3.1`。
+- `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`：存在时透传给上游。
 多凭据场景下，服务会按 Codex 会话头选择 Codex 凭据。粘连键只来自 `session-id`，没有该头时使用 `thread-id`；没有这两个请求头时保留原有按 `last_used_at` 选择凭据的行为。同一粘连键通常会落到同一凭据，凭据不可用或上游返回可轮换错误时才切换备用凭据。
 
 ## POST /v1/chat/completions
@@ -457,7 +456,6 @@ curl "https://<vercel-domain>/admin/settings" \
 ```json
 {
   "fastMode": true,
-  "identityConfuse": false,
   "proxyApiKeys": [
     {
       "id": "key_3f9a8c1d2e4b5678",
@@ -472,7 +470,7 @@ curl "https://<vercel-domain>/admin/settings" \
 }
 ```
 
-`fastMode` 默认为 `true`。开启时，服务会向 Codex 上游发送 `service_tier="priority"`；关闭时，服务不会发送 `service_tier`。`identityConfuse` 默认为 `false`，开启后会按当前 Codex 凭据改写上游可见的稳定客户端标识，响应返回客户端前恢复原值。多凭据部署会按 `session-id`、`thread-id` 做凭据粘连，以减少同一会话被轮转拆分成多套上游缓存键。
+`fastMode` 默认为 `true`。开启时，服务会向 Codex 上游发送 `service_tier="priority"`；关闭时，服务不会发送 `service_tier`。多凭据部署会按 `session-id`、`thread-id` 做凭据粘连，以减少同一会话被轮转拆分成多套上游缓存键。
 
 API KEY 和 ADMIN KEY 明文只用于写入，接口响应只返回脱敏后的 `display`。
 
@@ -486,7 +484,7 @@ API KEY 和 ADMIN KEY 明文只用于写入，接口响应只返回脱敏后的 
 curl -X POST "https://<vercel-domain>/admin/settings" \
   -H "Authorization: Bearer <ADMIN_TOKEN>" \
   -H "Content-Type: application/json" \
-  -d '{"fastMode":false,"identityConfuse":true,"proxyApiKeys":[{"id":"key_3f9a8c1d2e4b5678"},{"value":"new-proxy-key"}],"adminToken":"new-admin-token"}'
+  -d '{"fastMode":false,"proxyApiKeys":[{"id":"key_3f9a8c1d2e4b5678"},{"value":"new-proxy-key"}],"adminToken":"new-admin-token"}'
 ```
 
 请求体：
@@ -494,7 +492,6 @@ curl -X POST "https://<vercel-domain>/admin/settings" \
 ```json
 {
   "fastMode": false,
-  "identityConfuse": true,
   "proxyApiKeys": [
     {
       "id": "key_3f9a8c1d2e4b5678"
@@ -507,7 +504,7 @@ curl -X POST "https://<vercel-domain>/admin/settings" \
 }
 ```
 
-四个字段都可以单独提交。`proxyApiKeys` 支持两种格式：字符串格式会按英文逗号或换行分隔并覆盖当前列表；数组格式用于控制面板行级编辑，`{"id":"..."}` 保留已有 key，`{"id":"...","value":"..."}` 替换已有 key，`{"value":"..."}` 创建新 key，省略某个已有 `id` 等同删除。`adminToken` 为空字符串时保持原值。响应与 `GET /admin/settings` 相同。
+三个字段都可以单独提交。`proxyApiKeys` 支持两种格式：字符串格式会按英文逗号或换行分隔并覆盖当前列表；数组格式用于控制面板行级编辑，`{"id":"..."}` 保留已有 key，`{"id":"...","value":"..."}` 替换已有 key，`{"value":"..."}` 创建新 key，省略某个已有 `id` 等同删除。`adminToken` 为空字符串时保持原值。响应与 `GET /admin/settings` 相同。
 
 ## GET /admin/credentials
 

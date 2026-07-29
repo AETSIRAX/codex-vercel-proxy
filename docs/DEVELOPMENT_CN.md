@@ -13,7 +13,6 @@ src/codex.ts                 Responses 代理、上游请求、凭证轮换
 src/codex-endpoint.ts        Codex 扩展端点路径与公共请求头构造
 src/codex-payload.ts         请求规范化与 GPT-5.6 Responses Lite 适配
 src/codex-affinity.ts        Codex 会话粘连凭据选择
-src/codex-identity.ts        Codex 客户端标识混淆与恢复
 src/codex-oauth.ts           Codex OAuth 登录（PKCE、授权码交换、凭证映射）
 src/chat.ts                  Chat Completions 到 Responses 的转换
 src/chat-payload.ts          Chat 请求字段兼容转换
@@ -59,7 +58,7 @@ vercel.json                  Vercel Functions、Cron、rewrite 配置
 | `CRON_SECRET` | 是 | `/cron/refresh` 和 `/cron/cleanup` 定时任务密钥 |
 | `CRED_ENCRYPTION_KEY` | 是 | 凭证加密密钥，建议使用长随机字符串 |
 | `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4` |
-| `USER_AGENT` | 否 | 请求上游 Codex 的 User-Agent |
+| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `version` 时使用的 CLI 版本，默认 `0.146.0-alpha.3.1` |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
 | `REFRESH_MIN_INTERVAL_SECONDS` | 否 | 强制刷新最小间隔，默认 `300` |
@@ -75,7 +74,7 @@ ADMIN_TOKEN=replace-with-local-admin-token
 CRON_SECRET=replace-with-local-cron-secret
 CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
 MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4
-USER_AGENT="codex-tui/0.144.1 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.144.1)"
+CODEX_CLI_VERSION=0.146.0-alpha.3.1
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
 REFRESH_LEAD_SECONDS=172800
 REFRESH_MIN_INTERVAL_SECONDS=300
@@ -168,7 +167,6 @@ CREATE TABLE IF NOT EXISTS usage_hourly (
 CREATE TABLE IF NOT EXISTS proxy_settings (
   id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   fast_mode BOOLEAN NOT NULL DEFAULT TRUE,
-  identity_confuse BOOLEAN NOT NULL DEFAULT FALSE,
   proxy_api_key_hashes_json JSONB NOT NULL DEFAULT '[]'::jsonb,
   admin_token_hash TEXT,
   admin_token_display TEXT,
@@ -176,7 +174,7 @@ CREATE TABLE IF NOT EXISTS proxy_settings (
 );
 ```
 
-`fast_mode` 默认为开启，以保持旧版本的 `service_tier="priority"` 行为。关闭后，服务不会向 Codex 上游发送 `service_tier`。`identity_confuse` 默认为关闭，开启后会按当前 Codex 凭据改写上游可见的稳定客户端标识。
+`fast_mode` 默认为开启，以保持旧版本的 `service_tier="priority"` 行为。关闭后，服务不会向 Codex 上游发送 `service_tier`。
 
 API KEY 和 ADMIN KEY 明文不写入数据库，只保存 SHA-256 和脱敏展示值。每条 API KEY 会返回稳定 `id`，控制面板用它保留、替换或删除单条 key；新增和替换时才提交明文。访问方维度会用当前控制面板 API KEY 配置返回 `KEY 1 · <脱敏值>` 这样的 `clientKey` 展示名，控制面板据此显示每个代理 key 的 token 用量。
 
@@ -263,7 +261,6 @@ Responses 入口会在转发前执行以下处理：
 - GPT-5.6 系列（`gpt-5.6*`，Responses Lite 模型）额外处理：`parallel_tool_calls` 固定为 `false`；`reasoning.context` 缺省时补为 `all_turns`；`input` 中没有 `additional_tools` 项时，顶层 `tools` 里的 `function`、`custom` 工具转成 `additional_tools` 项、非空 `instructions` 转成 developer message 一起前置到 `input`，已发送 `additional_tools` 项的 lite-aware 客户端输入保持原样。`web_search` 等托管工具保留在顶层：lite 上游只支持客户端执行的工具，托管工具会被上游以 `400 unsupported_value` 明确拒绝，避免静默失效
 - GPT-5.6 系列会删除 message、`function_call_output`、`custom_tool_call_output` 图片内容中的 `detail`
 - `prompt_cache_key` 显式传入时保留；缺省时按客户端代理密钥生成稳定 UUID，并作为默认上游 `session-id`、`thread-id`
-- Identity confuse 开启时，请求体、请求头、`client_metadata` 和 turn metadata 中的 Codex 身份投影会按当前上游凭据生成稳定替代值；响应只恢复结构化身份字段，普通输出文本不执行替换
 - 多凭据场景按 Codex 会话头做凭据粘连；粘连键只来自 `session-id`，没有该头时使用 `thread-id`，凭据不可用或上游返回可轮换错误时才切换备用凭据
 
 发往上游 Codex 的请求头处理：
@@ -271,9 +268,9 @@ Responses 入口会在转发前执行以下处理：
 - `session-id` 和 `thread-id` 显式传入时使用请求头值；否则使用 `prompt_cache_key` 或代理自动生成的稳定 UUID
 - `x-client-request-id` 显式传入时作为上游 `X-Client-Request-Id`；否则使用当前 `thread-id`
 - `originator` 显式传入时透传；否则使用 `codex_cli_rs`
-- `version` 显式传入时透传；否则默认发送 `0.144.1`（GPT-5.6 上游要求客户端版本不低于 `0.144.0`）
+- `User-Agent` 显式传入时透传；否则生成 `codex_cli_rs/<有效版本>`；旧的 `USER_AGENT` 环境变量不再参与请求构造
+- `version` 显式传入时透传；否则使用 `CODEX_CLI_VERSION`，未配置时发送当前默认版本 `0.146.0-alpha.3.1`
 - `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-openai-internal-codex-responses-lite` 存在时透传；GPT-5.6 系列模型固定携带 `x-openai-internal-codex-responses-lite: true`
-- Identity confuse 开启时，session、thread、request、window、parent thread、installation 及 turn metadata 中的身份字段会统一改写；非法 `x-codex-turn-metadata` 返回 `400 invalid_codex_identity`
 
 Chat Completions 入口会先转成 Responses：
 
@@ -352,7 +349,7 @@ npx vercel env add ADMIN_TOKEN production
 npx vercel env add CRON_SECRET production
 npx vercel env add CRED_ENCRYPTION_KEY production
 npx vercel env add MODELS production
-npx vercel env add USER_AGENT production
+npx vercel env add CODEX_CLI_VERSION production
 npx vercel env add RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS production
 npx vercel env add REFRESH_LEAD_SECONDS production
 npx vercel env add REFRESH_MIN_INTERVAL_SECONDS production
@@ -360,7 +357,7 @@ npx vercel env add FAILURE_COOLDOWN_SECONDS production
 npx vercel env add REFRESH_LOCK_SECONDS production
 ```
 
-`PROXY_API_KEY` 和 `ADMIN_TOKEN` 是首次初始化值；部署成功并连接控制面板后，可在“配置”页调整当前 API KEY、ADMIN KEY、Fast mode 和 Identity confuse。
+`PROXY_API_KEY` 和 `ADMIN_TOKEN` 是首次初始化值；部署成功并连接控制面板后，可在“配置”页调整当前 API KEY、ADMIN KEY 和 Fast mode。
 
 构建并发布：
 

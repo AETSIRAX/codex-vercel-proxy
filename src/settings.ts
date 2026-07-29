@@ -10,7 +10,6 @@ export interface KeyDisplay {
 export interface ProxySettings {
   adminToken?: KeyDisplay;
   fastMode: boolean;
-  identityConfuse: boolean;
   proxyApiKeys: KeyDisplay[];
   serviceTier: "priority" | "default";
   updatedAt?: string;
@@ -22,7 +21,6 @@ export interface AuthSettings {
 }
 
 const DEFAULT_FAST_MODE = true;
-const DEFAULT_IDENTITY_CONFUSE = false;
 const FAST_MODE_SERVICE_TIER = "priority";
 const DEFAULT_SERVICE_TIER = "default";
 
@@ -31,7 +29,6 @@ interface SettingsDbRow {
   admin_token_display: string | null;
   admin_token_hash: string | null;
   fast_mode: boolean;
-  identity_confuse: boolean | null;
   proxy_api_key_hashes_json: unknown | null;
   updated_at: number | string | bigint;
 }
@@ -44,7 +41,6 @@ interface KeyFingerprint extends KeyDisplay {
 interface SettingsUpdate {
   adminToken?: string;
   fastMode?: boolean;
-  identityConfuse?: boolean;
   proxyApiKeys?: ProxyApiKeyUpdate;
 }
 
@@ -76,7 +72,7 @@ export class SettingsStore {
   async getSettings(): Promise<ProxySettings> {
     await ensureSchema(this.sql, this.env);
     const rows = await this.sql<SettingsDbRow[]>`
-      SELECT fast_mode, identity_confuse, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
+      SELECT fast_mode, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
         FROM proxy_settings
        WHERE id = 1
     `;
@@ -86,7 +82,7 @@ export class SettingsStore {
   async getAuthSettings(): Promise<AuthSettings> {
     await ensureSchema(this.sql, this.env);
     const rows = await this.sql<SettingsDbRow[]>`
-      SELECT fast_mode, identity_confuse, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
+      SELECT fast_mode, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
         FROM proxy_settings
        WHERE id = 1
     `;
@@ -100,7 +96,7 @@ export class SettingsStore {
   async proxyKeyDisplayByHash(): Promise<Map<string, string>> {
     await ensureSchema(this.sql, this.env);
     const rows = await this.sql<SettingsDbRow[]>`
-      SELECT fast_mode, identity_confuse, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
+      SELECT fast_mode, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
         FROM proxy_settings
        WHERE id = 1
     `;
@@ -121,22 +117,20 @@ export class SettingsStore {
       : await keyFingerprint(update.adminToken, "ADMIN");
     const rows = await this.sql<SettingsDbRow[]>`
       INSERT INTO proxy_settings (
-        id, fast_mode, identity_confuse, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
+        id, fast_mode, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
       )
       VALUES (
         1, ${update.fastMode ?? existing?.fast_mode ?? DEFAULT_FAST_MODE},
-        ${update.identityConfuse ?? existing?.identity_confuse ?? DEFAULT_IDENTITY_CONFUSE},
         ${this.sql.json(proxyApiKeys as unknown as SqlJsonValue)},
         ${adminToken?.hash ?? null}, ${adminToken?.display ?? null}, ${now}
       )
       ON CONFLICT(id) DO UPDATE SET
         fast_mode = excluded.fast_mode,
-        identity_confuse = excluded.identity_confuse,
         proxy_api_key_hashes_json = excluded.proxy_api_key_hashes_json,
         admin_token_hash = excluded.admin_token_hash,
         admin_token_display = excluded.admin_token_display,
         updated_at = excluded.updated_at
-       RETURNING fast_mode, identity_confuse, updated_at
+       RETURNING fast_mode, updated_at
     `;
     return {
       ...settingsFromRow({
@@ -151,7 +145,7 @@ export class SettingsStore {
 
   private async getSettingsRow(): Promise<SettingsDbRow | undefined> {
     const rows = await this.sql<SettingsDbRow[]>`
-      SELECT fast_mode, identity_confuse, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
+      SELECT fast_mode, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
         FROM proxy_settings
        WHERE id = 1
     `;
@@ -168,23 +162,21 @@ async function createSchema(sql: Sql, env: AppEnv): Promise<void> {
     CREATE TABLE IF NOT EXISTS proxy_settings (
       id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
       fast_mode BOOLEAN NOT NULL DEFAULT TRUE,
-      identity_confuse BOOLEAN NOT NULL DEFAULT FALSE,
       proxy_api_key_hashes_json JSONB NOT NULL DEFAULT '[]'::jsonb,
       admin_token_hash TEXT,
       admin_token_display TEXT,
       updated_at BIGINT NOT NULL
     )
   `;
-  await sql`ALTER TABLE proxy_settings ADD COLUMN IF NOT EXISTS identity_confuse BOOLEAN NOT NULL DEFAULT FALSE`;
   await sql`ALTER TABLE proxy_settings ADD COLUMN IF NOT EXISTS proxy_api_key_hashes_json JSONB NOT NULL DEFAULT '[]'::jsonb`;
   await sql`ALTER TABLE proxy_settings ADD COLUMN IF NOT EXISTS admin_token_hash TEXT`;
   await sql`ALTER TABLE proxy_settings ADD COLUMN IF NOT EXISTS admin_token_display TEXT`;
   await sql`
     INSERT INTO proxy_settings (
-      id, fast_mode, identity_confuse, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
+      id, fast_mode, proxy_api_key_hashes_json, admin_token_hash, admin_token_display, updated_at
     )
     VALUES (
-      1, ${DEFAULT_FAST_MODE}, ${DEFAULT_IDENTITY_CONFUSE}, ${sql.json(envProxyKeys as unknown as SqlJsonValue)},
+      1, ${DEFAULT_FAST_MODE}, ${sql.json(envProxyKeys as unknown as SqlJsonValue)},
       ${envAdmin?.hash ?? null}, ${envAdmin?.display ?? null}, ${now}
     )
     ON CONFLICT(id) DO NOTHING
@@ -194,13 +186,11 @@ async function createSchema(sql: Sql, env: AppEnv): Promise<void> {
 
 function settingsFromRow(row: SettingsDbRow | undefined): ProxySettings {
   const fastMode = row?.fast_mode ?? DEFAULT_FAST_MODE;
-  const identityConfuse = row?.identity_confuse ?? DEFAULT_IDENTITY_CONFUSE;
   const updatedAt = row === undefined ? undefined : isoTime(requiredDbNumber(row.updated_at, "updated_at"));
   const adminToken = keyFingerprintFromRow(row);
   return {
     adminToken: adminToken === undefined ? undefined : { display: adminToken.display },
     fastMode,
-    identityConfuse,
     proxyApiKeys: keyFingerprintsFromJson(row?.proxy_api_key_hashes_json).map(({ display, id }) => ({ display, id })),
     serviceTier: fastMode ? FAST_MODE_SERVICE_TIER : DEFAULT_SERVICE_TIER,
     updatedAt,
@@ -251,12 +241,6 @@ function normalizeSettingsUpdate(value: unknown): SettingsUpdate {
       throw new Error("fastMode must be boolean");
     }
     out.fastMode = value.fastMode;
-  }
-  if ("identityConfuse" in value) {
-    if (typeof value.identityConfuse !== "boolean") {
-      throw new Error("identityConfuse must be boolean");
-    }
-    out.identityConfuse = value.identityConfuse;
   }
   if ("proxyApiKeys" in value) {
     if (typeof value.proxyApiKeys === "string") {

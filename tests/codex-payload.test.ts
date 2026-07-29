@@ -7,7 +7,6 @@ import type { JsonObject } from "../src/types.js";
 
 const settings: ProxySettings = {
   fastMode: false,
-  identityConfuse: false,
   proxyApiKeys: [],
   serviceTier: "default",
 };

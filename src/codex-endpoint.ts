@@ -1,4 +1,4 @@
-import { codexBaseURL, DEFAULT_CODEX_CLI_VERSION, userAgent, type AppEnv } from "./env.js";
+import { codexBaseURL, codexClientVersion, userAgent, type AppEnv } from "./env.js";
 import type { SelectedCredential } from "./types.js";
 
 export type CodexJsonEndpointPath =
@@ -40,9 +40,9 @@ export function buildCodexRequestHeaders(
   }
   headers.set("Accept", accept);
   headers.set("Authorization", `Bearer ${credential.token}`);
-  headers.set("User-Agent", userAgent(env));
+  headers.set("User-Agent", userAgent(env, request.headers));
   headers.set("Connection", "Keep-Alive");
-  headers.set("Version", request.headers.get("version")?.trim() || DEFAULT_CODEX_CLI_VERSION);
+  headers.set("Version", codexClientVersion(env, request.headers));
   copyHeader(request.headers, headers, "If-None-Match");
   copyHeader(request.headers, headers, "X-OAI-Attestation");
   copyHeader(request.headers, headers, "X-OpenAI-Memgen-Request");
