@@ -10,7 +10,7 @@ Codex Vercel Proxy 是一个部署在 Vercel Functions 上的 Codex 代理服务
 
 ![Codex Proxy 控制面板](docs/assets/dashboard.png)
 
-控制面板「导入」面板内置 Codex OAuth 登录：
+凭据池页右上角「导入凭据」抽屉内置 Codex OAuth 登录：
 
 ![Codex Proxy OAuth 登录](docs/assets/dashboard-oauth.png)
 
@@ -27,10 +27,10 @@ Codex Vercel Proxy 是一个部署在 Vercel Functions 上的 Codex 代理服务
 - 请求规范化：对齐 Codex 上游预期参数，并兼容常见 OpenAI 客户端调用方式
 - 缓存路由：保留 `prompt_cache_key`，缺省时自动为 Codex 请求生成稳定缓存键
 - 用量统计：记录请求耗时、模型、凭证、缓存 token、思考 token 和汇总数据
-- 用量分析：控制面板支持按 24 小时、7 天、30 天查看请求走势和聚合排行
+- 用量分析：控制面板支持按 24 小时、7 天、30 天查看 Token 分类堆叠与请求数走势、模型/凭据/访问 KEY 聚合排行，请求明细可按「仅错误」「慢请求」筛选
 - 请求配置：控制面板可切换 Fast mode（客户端未指定 `service_tier` 时的兜底 `priority`），并按行新增、替换、删除代理 API KEY 和 ADMIN KEY
 - 加密存储：凭证私密字段使用 `CRED_ENCRYPTION_KEY` 加密后写入 Postgres
-- 控制面板：访问 `/` 或 `/dashboard`，手动输入当前 ADMIN KEY 后管理凭证
+- 控制面板：访问 `/` 或 `/dashboard`，首屏输入服务地址和当前 ADMIN KEY 后管理凭证；连接后可在右上角连接胶囊中重新连接或清除，支持浅色/深色主题与键盘快捷键（`1`–`4` 切换页面，`/` 聚焦凭据搜索）
 - 健康检查：公开 `/healthz` 端点，检查关键环境变量、数据库连通性和已配置密钥
 - 单文件前端：控制面板位于 `public/index.html`，无需额外前端构建链路
 
@@ -274,11 +274,11 @@ curl -X POST "https://<vercel-domain>/admin/credentials/import" \
 
 ## OAuth 登录
 
-除手动导入 token JSON 外，控制面板「导入」面板内置 Codex OAuth 登录（PKCE），无需自备 token：
+除手动导入 token JSON 外，凭据池页右上角的「导入凭据」抽屉内置 Codex OAuth 登录（PKCE），无需自备 token：
 
-1. 点击「开始 OAuth 登录」，在新标签页登录 OpenAI 账号；
+1. 点击「开始登录」，在新标签页登录 OpenAI 账号；
 2. 登录成功后浏览器会跳转到 `http://localhost:1455/auth/callback?code=...`，由于本服务不在本地监听该端口，页面打不开属于正常现象；
-3. 复制浏览器地址栏中完整的回调地址，粘贴回面板并点击「完成登录并导入」，服务会自动换取 token 并入库。
+3. 复制浏览器地址栏中完整的回调地址，粘贴回抽屉并点击「完成登录并导入」，服务会自动换取 token 并入库。
 
 OAuth 请求的 scope（含 `api.connectors.read`、`api.connectors.invoke`）和 `originator=codex_cli_rs` 参数与 Codex CLI 一致。OAuth 客户端复用 Codex CLI 的固定回环回调地址，因此这里采用「手动粘贴回调」的无状态实现，PKCE `code_verifier` 仅在当前浏览器内存中短暂保存。对应管理接口为 `POST /admin/oauth/codex/start` 和 `POST /admin/oauth/codex/complete`，详见[接口文档](docs/API_CN.md)。
 
