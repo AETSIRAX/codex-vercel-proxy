@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildCodexEndpointUrl,
   buildCodexRequestHeaders,
+  buildCodexRoutingHint,
   resolveCodexJsonPostEndpoint,
 } from "../src/codex-endpoint.js";
 
@@ -20,21 +21,22 @@ test("codex extension routes resolve to their upstream paths", () => {
 });
 
 test("codex endpoint URL appends the supported path and client version", () => {
-  const url = buildCodexEndpointUrl("models", new URLSearchParams({ client_version: "0.146.0-alpha.3.1" }));
+  const url = buildCodexEndpointUrl("models", new URLSearchParams({ client_version: "0.153.4" }));
 
-  assert.equal(url.toString(), "https://chatgpt.com/backend-api/codex/models?client_version=0.146.0-alpha.3.1");
+  assert.equal(url.toString(), "https://chatgpt.com/backend-api/codex/models?client_version=0.153.4");
 });
 
 test("codex endpoint headers forward client identity, attestation and conditional model headers", () => {
-  const request = new Request("https://proxy.example/v1/models?client_version=0.146.0-alpha.3.1", {
+  const request = new Request("https://proxy.example/v1/models?client_version=0.153.4", {
     headers: {
       "if-none-match": "etag-value",
       "x-oai-attestation": "attestation-value",
       "x-openai-memgen-request": "true",
       "x-openai-subagent": "memory_consolidation",
       "x-codex-installation-id": "installation-value",
-      "user-agent": "codex_work_desktop/0.146.0-alpha.3.1",
-      version: "0.146.0-alpha.3.1",
+      "x-codex-routing-hint": "model=gpt-6-astra;tier=priority",
+      "user-agent": "codex_work_desktop/0.153.4",
+      version: "0.153.4",
     },
   });
   const headers = buildCodexRequestHeaders(
@@ -57,9 +59,29 @@ test("codex endpoint headers forward client identity, attestation and conditiona
   assert.equal(headers.get("x-openai-memgen-request"), "true");
   assert.equal(headers.get("x-openai-subagent"), "memory_consolidation");
   assert.equal(headers.get("x-codex-installation-id"), "installation-value");
-  assert.equal(headers.get("user-agent"), "codex_work_desktop/0.146.0-alpha.3.1");
-  assert.equal(headers.get("version"), "0.146.0-alpha.3.1");
+  assert.equal(headers.get("x-codex-routing-hint"), "model=gpt-6-astra;tier=priority");
+  assert.equal(headers.get("user-agent"), "codex_work_desktop/0.153.4");
+  assert.equal(headers.get("version"), "0.153.4");
   assert.equal(headers.has("content-type"), false);
+  assert.equal(headers.has("x-openai-fedramp"), false);
+});
+
+test("codex endpoint headers flag fedramp accounts the way Codex does", () => {
+  const headers = buildCodexRequestHeaders(
+    new Request("https://proxy.example/v1/alpha/search"),
+    {},
+    { id: "credential-1", label: "primary", token: "upstream-token", accountId: "account-1", fedramp: true },
+    "application/json",
+    true,
+  );
+
+  assert.equal(headers.get("x-openai-fedramp"), "true");
+});
+
+test("routing hint carries the model and the service tier when present", () => {
+  assert.equal(buildCodexRoutingHint("gpt-6-astra", undefined), "model=gpt-6-astra");
+  assert.equal(buildCodexRoutingHint("gpt-5.6-sol", "priority"), "model=gpt-5.6-sol;tier=priority");
+  assert.equal(buildCodexRoutingHint(undefined, "priority"), undefined);
 });
 
 test("codex JSON endpoint headers apply the verified default client identity", () => {
@@ -71,8 +93,9 @@ test("codex JSON endpoint headers apply the verified default client identity", (
     true,
   );
 
-  assert.equal(headers.get("version"), "0.146.0-alpha.3.1");
-  assert.equal(headers.get("user-agent"), "codex_cli_rs/0.146.0-alpha.3.1");
+  // Current Codex clients identify themselves through User-Agent only.
+  assert.equal(headers.has("version"), false);
+  assert.equal(headers.get("user-agent"), "codex_cli_rs/0.153.4");
   assert.equal(headers.get("content-type"), "application/json");
 });
 
@@ -87,7 +110,7 @@ test("codex endpoint headers use deployment identity when the client omits it", 
     true,
   );
 
-  assert.equal(headers.get("version"), "0.147.0");
+  assert.equal(headers.has("version"), false);
   assert.equal(headers.get("user-agent"), "codex_cli_rs/0.147.0");
 });
 

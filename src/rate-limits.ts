@@ -22,6 +22,9 @@ export async function fetchCredentialRateLimits(
   if (credential.accountId) {
     headers.set("ChatGPT-Account-Id", credential.accountId);
   }
+  if (credential.fedramp) {
+    headers.set("X-OpenAI-Fedramp", "true");
+  }
   const response = await fetch(url, { method: "GET", headers });
   const headerSnapshots = parseRateLimitHeaders(response.headers);
   const body = await response.text();
@@ -61,6 +64,7 @@ export function parseRateLimitPayload(value: unknown): RateLimitSnapshot[] {
       credits: parsePayloadCredits(value.credits),
       planType,
       rateLimitReachedType,
+      spendControlReached: booleanValue(isRecord(value.spend_control) ? value.spend_control.reached : undefined),
     }),
   ].filter((item): item is RateLimitSnapshot => item !== undefined);
 
@@ -109,6 +113,18 @@ export function parseRateLimitHeaders(headers: Headers): RateLimitSnapshot[] {
       snapshots.push(snapshot);
     }
   }
+  // On usage-limit responses Codex attaches x-codex-rate-limit-reached-type to the
+  // limit family named by x-codex-active-limit (default "codex").
+  const reachedType = stringValue(headers.get("x-codex-rate-limit-reached-type"));
+  if (reachedType !== undefined) {
+    const activeLimitId = normalizeLimitId(stringValue(headers.get("x-codex-active-limit")) ?? "codex");
+    const target = snapshots.find((snapshot) => snapshot.limitId === activeLimitId);
+    if (target) {
+      target.rateLimitReachedType = reachedType;
+    } else {
+      snapshots.push({ limitId: activeLimitId, rateLimitReachedType: reachedType });
+    }
+  }
   return snapshots;
 }
 
@@ -133,6 +149,7 @@ export function normalizeRateLimitSnapshots(value: unknown): RateLimitSnapshot[]
       credits: parseStoredCredits(item.credits),
       planType: stringValue(item.planType),
       rateLimitReachedType: stringValue(item.rateLimitReachedType),
+      spendControlReached: booleanValue(item.spendControlReached),
     });
     if (snapshot) {
       snapshots.push(snapshot);
@@ -222,6 +239,10 @@ function parseHeaderWindow(headers: Headers, prefix: string): RateLimitWindowSna
   }
   const windowMinutes = numberValue(headers.get(`${prefix}-window-minutes`));
   const resetAt = numberValue(headers.get(`${prefix}-reset-at`));
+  // Mirror codex-api: an all-zero header family carries no window data.
+  if (usedPercent === 0 && !(windowMinutes !== undefined && windowMinutes !== 0) && resetAt === undefined) {
+    return undefined;
+  }
   return compactWindow({
     usedPercent,
     windowMinutes: windowMinutes !== undefined && windowMinutes > 0 ? Math.trunc(windowMinutes) : undefined,
@@ -281,6 +302,7 @@ function compactSnapshot(input: {
   credits?: RateLimitSnapshot["credits"];
   planType?: string;
   rateLimitReachedType?: string;
+  spendControlReached?: boolean;
 }): RateLimitSnapshot | undefined {
   const snapshot: RateLimitSnapshot = { limitId: normalizeLimitId(input.limitId) };
   if (input.limitName) {
@@ -300,6 +322,9 @@ function compactSnapshot(input: {
   }
   if (input.rateLimitReachedType) {
     snapshot.rateLimitReachedType = input.rateLimitReachedType;
+  }
+  if (input.spendControlReached !== undefined) {
+    snapshot.spendControlReached = input.spendControlReached;
   }
   return hasRateLimitData(snapshot) ? snapshot : undefined;
 }
@@ -361,7 +386,8 @@ function hasRateLimitData(snapshot: RateLimitSnapshot): boolean {
     snapshot.secondary !== undefined ||
     snapshot.credits !== undefined ||
     snapshot.planType !== undefined ||
-    snapshot.rateLimitReachedType !== undefined
+    snapshot.rateLimitReachedType !== undefined ||
+    snapshot.spendControlReached !== undefined
   );
 }
 

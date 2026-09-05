@@ -1,19 +1,30 @@
 import {
   collectOutputItem,
+  emptyUpstreamBodyResponse,
   fetchCodexWithRotation,
   extractResponseText,
   patchCompletedOutput,
+  recordClientCancelled,
   reportResponseStreamError,
+  resolveRequestIdentity,
+  responseMetadataHeaders,
   responseObject,
   responseStreamError,
+  sseResponseHeaders,
+  STREAM_TRUNCATED_MESSAGE,
   type OutputItem,
 } from "./codex.js";
 import { isResponsesLiteModel, prepareCodexPayload } from "./codex-payload.js";
 import { resolveChatVerbosity } from "./chat-payload.js";
-import { credentialManager, scheduleCredentialRateLimitUpdate } from "./credential-manager.js";
+import { ToolCallTracker, toolCallKeysFromEvent } from "./chat-stream-tools.js";
+import {
+  credentialManager,
+  scheduleCredentialRateLimitUpdate,
+  scheduleCredentialSuccessUpdate,
+} from "./credential-manager.js";
 import { configuredModels, type AppEnv } from "./env.js";
 import { settingsStore } from "./settings.js";
-import { encodeSseData, parseSseJson, readSseData } from "./sse.js";
+import { encodeSseData, parseSseJson, readSseData, readSseDataFromReader } from "./sse.js";
 import type { JsonObject, JsonValue, SelectedCredential } from "./types.js";
 import { createUsageContext, extractTokenUsage, scheduleUsageRecord, type UsageContext } from "./usage.js";
 import { contentStringValue, errorResponse, isRecord, jsonResponse, normalizeErrorMessage, stringValue } from "./utils.js";
@@ -22,14 +33,16 @@ export async function proxyChatCompletions(request: Request, env: AppEnv, input:
   const wantsStream = input.stream === true;
   const originalToolNameMap = buildShortNameMap(functionToolNames(input.tools));
   const settings = await settingsStore(env).getSettings();
-  const responsesPayload = prepareCodexPayload(chatToResponses(input, originalToolNameMap, env), true, settings);
+  const responsesInput = chatToResponses(input, originalToolNameMap, env);
+  const identity = await resolveRequestIdentity(request, responsesInput);
+  const responsesPayload = await prepareCodexPayload(responsesInput, true, settings, identity);
   const modelName = stringValue(responsesPayload.model) ?? "unknown";
   const usageContext = createUsageContext(request, {
     endpoint: "/v1/chat/completions",
     model: modelName,
     stream: wantsStream,
   });
-  const upstream = await fetchCodexWithRotation(request, env, responsesPayload, true);
+  const upstream = await fetchCodexWithRotation(request, env, responsesPayload, true, identity);
   if (upstream instanceof Response) {
     scheduleUsageRecord(env, usageContext, {
       statusCode: upstream.status,
@@ -38,6 +51,7 @@ export async function proxyChatCompletions(request: Request, env: AppEnv, input:
     return upstream;
   }
   if (wantsStream) {
+    const includeUsage = isRecord(input.stream_options) && input.stream_options.include_usage === true;
     return streamChat(
       upstream.response,
       modelName,
@@ -45,6 +59,7 @@ export async function proxyChatCompletions(request: Request, env: AppEnv, input:
       env,
       upstream.credential,
       usageContext,
+      includeUsage,
     );
   }
   if (!upstream.response.body) {
@@ -112,13 +127,16 @@ export async function proxyChatCompletions(request: Request, env: AppEnv, input:
     return errorResponse(502, "upstream stream ended before response.completed", "bad_upstream_response");
   }
   const responseValue = responseObject(completed);
+  scheduleCredentialSuccessUpdate(env, upstream.credential.id, upstream.response.status);
   scheduleUsageRecord(env, usageContext, {
     credential: upstream.credential,
     response: responseValue,
     statusCode: upstream.response.status,
   });
   scheduleCredentialRateLimitUpdate(env, upstream.credential);
-  return jsonResponse(responseToChat(responseValue, modelName, originalToolNameMap));
+  return jsonResponse(responseToChat(responseValue, modelName, originalToolNameMap), {
+    headers: responseMetadataHeaders(upstream.response),
+  });
 }
 
 function chatToResponses(input: JsonObject, originalToolNameMap: Map<string, string>, env: AppEnv): JsonObject {
@@ -169,6 +187,7 @@ function chatToResponses(input: JsonObject, originalToolNameMap: Map<string, str
   }
   applyTextFormat(input, payload);
   copyJsonField(input, payload, "prompt_cache_key");
+  copyJsonField(input, payload, "service_tier");
   const tools = convertChatTools(input.tools, originalToolNameMap);
   if (tools.length > 0) {
     payload.tools = tools;
@@ -443,7 +462,6 @@ function buildShortNameMap(names: string[]): Map<string, string> {
 function responseToChat(response: JsonValue, model: string, nameMap: Map<string, string>): JsonObject {
   const now = Math.floor(Date.now() / 1000);
   const responseRecord = isRecord(response) ? response : {};
-  const usage = extractTokenUsage(response);
   const output = chatOutputFromResponse(response, nameMap);
   const message: JsonObject = {
     role: "assistant",
@@ -455,17 +473,7 @@ function responseToChat(response: JsonValue, model: string, nameMap: Map<string,
   if (output.toolCalls.length > 0) {
     message.tool_calls = output.toolCalls as JsonValue;
   }
-  const usageOut: JsonObject = {
-    prompt_tokens: usage.inputTokens,
-    completion_tokens: usage.outputTokens,
-    total_tokens: usage.totalTokens,
-  };
-  if (usage.hasCachedTokens) {
-    usageOut.prompt_tokens_details = { cached_tokens: usage.cachedTokens };
-  }
-  if (usage.hasReasoningTokens) {
-    usageOut.completion_tokens_details = { reasoning_tokens: usage.reasoningTokens };
-  }
+  const usageOut = chatUsage(response);
   return {
     id: stringValue(responseRecord.id) ?? `chatcmpl-${crypto.randomUUID()}`,
     object: "chat.completion",
@@ -572,55 +580,58 @@ function restoreToolName(name: string, nameMap: Map<string, string>): string {
   return name;
 }
 
-function streamChat(
+async function streamChat(
   response: Response,
   model: JsonValue | undefined,
   nameMap: Map<string, string>,
   env: AppEnv,
   credential: SelectedCredential,
   usageContext: UsageContext,
-): Response {
-  const headers = new Headers(response.headers);
-  headers.set("Content-Type", "text/event-stream; charset=utf-8");
-  headers.set("Cache-Control", "no-cache");
-  headers.delete("content-length");
+  includeUsage: boolean,
+): Promise<Response> {
+  const manager = credentialManager(env);
+  const upstreamBody = response.body;
+  if (!upstreamBody) {
+    return emptyUpstreamBodyResponse(manager, credential, env, usageContext);
+  }
+  const headers = sseResponseHeaders(response.headers);
   const modelName = typeof model === "string" ? model : "unknown";
   const id = `chatcmpl-${crypto.randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
+  const reader = upstreamBody.getReader();
+  let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
-      if (!response.body) {
-        await credentialManager(env).reportResult(credential.id, {
-          ok: false,
-          status: 502,
-          message: "upstream response body is empty",
-        });
-        scheduleUsageRecord(env, usageContext, {
-          credential,
-          statusCode: 502,
-          errorCode: "bad_upstream_response",
-        });
-        controller.error(new Error("upstream response body is empty"));
-        return;
-      }
-      let emittedContent = false;
+      const push = (value: string | JsonObject): void => {
+        if (!cancelled) {
+          controller.enqueue(encodeSseData(value));
+        }
+      };
+      // The client may cancel while a failure report is awaited; closing a
+      // cancelled stream throws, so only close what is still open.
+      const finish = (): void => {
+        if (!cancelled) {
+          controller.close();
+        }
+      };
+      const delta = (payload: JsonObject, finishReason: string | null = null): void => {
+        push(chatDelta(id, created, modelName, payload, finishReason));
+      };
+      const fail = (message: string, code: string): void => {
+        push(chatError(message, code));
+        push("[DONE]");
+      };
+      const toolCalls = new ToolCallTracker();
       const outputItems: OutputItem[] = [];
-      let functionCallIndex = -1;
-      let receivedArgumentsDelta = false;
+      let emittedContent = false;
       let completedSeen = false;
       let terminalErrorSeen = false;
-      const announcedToolCalls = new Set<string>();
-      controller.enqueue(
-        encodeSseData({
-          id,
-          object: "chat.completion.chunk",
-          created,
-          model: modelName,
-          choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
-        }),
-      );
+      delta({ role: "assistant" });
       try {
-        for await (const event of readSseData(response.body)) {
+        for await (const event of readSseDataFromReader(reader)) {
+          if (cancelled) {
+            break;
+          }
           const parsed = parseSseJson(event.data);
           if (!parsed) {
             continue;
@@ -635,22 +646,21 @@ function streamChat(
               statusCode: streamError.status,
               errorCode: streamError.code,
             });
-            controller.enqueue(encodeSseData(chatError(streamError.message, streamError.code)));
-            controller.enqueue(encodeSseData("[DONE]"));
+            fail(streamError.message, streamError.code);
             break;
           }
           if (parsed.type === "response.reasoning_summary_text.delta") {
-            const delta = contentStringValue(parsed.delta);
-            if (delta !== undefined) {
-              controller.enqueue(encodeSseData(chatDelta(id, created, modelName, { reasoning_content: delta }, null)));
+            const text = contentStringValue(parsed.delta);
+            if (text !== undefined) {
+              delta({ reasoning_content: text });
             }
             continue;
           }
           if (parsed.type === "response.output_text.delta") {
-            const delta = contentStringValue(parsed.delta);
-            if (delta !== undefined && delta !== "") {
+            const text = contentStringValue(parsed.delta);
+            if (text !== undefined && text !== "") {
               emittedContent = true;
-              controller.enqueue(encodeSseData(chatDelta(id, created, modelName, { content: delta }, null)));
+              delta({ content: text });
             }
             continue;
           }
@@ -659,81 +669,42 @@ function streamChat(
             if (!item || item.type !== "function_call") {
               continue;
             }
-            functionCallIndex += 1;
-            receivedArgumentsDelta = false;
-            const callId = stringValue(item.call_id) ?? stringValue(item.id) ?? "";
-            if (callId !== "") {
-              announcedToolCalls.add(callId);
-            }
-            controller.enqueue(
-              encodeSseData(
-                chatDelta(
-                  id,
-                  created,
-                  modelName,
-                  {
-                    tool_calls: [
-                      {
-                        index: functionCallIndex,
-                        id: callId,
-                        type: "function",
-                        function: {
-                          name: restoreToolName(contentStringValue(item.name) ?? "", nameMap),
-                          arguments: "",
-                        },
-                      },
-                    ],
+            const slot = toolCalls.add(toolCallKeysFromEvent(parsed));
+            slot.announced = true;
+            delta({
+              tool_calls: [
+                {
+                  index: slot.index,
+                  id: stringValue(item.call_id) ?? stringValue(item.id) ?? "",
+                  type: "function",
+                  function: {
+                    name: restoreToolName(contentStringValue(item.name) ?? "", nameMap),
+                    arguments: "",
                   },
-                  null,
-                ),
-              ),
-            );
+                },
+              ],
+            });
             continue;
           }
           if (parsed.type === "response.function_call_arguments.delta") {
-            receivedArgumentsDelta = true;
-            controller.enqueue(
-              encodeSseData(
-                chatDelta(
-                  id,
-                  created,
-                  modelName,
-                  {
-                    tool_calls: [
-                      {
-                        index: Math.max(functionCallIndex, 0),
-                        function: { arguments: contentStringValue(parsed.delta) ?? "" },
-                      },
-                    ],
-                  },
-                  null,
-                ),
-              ),
-            );
+            const keys = toolCallKeysFromEvent(parsed);
+            const slot = toolCalls.resolve(keys) ?? toolCalls.add(keys);
+            slot.argumentsSent = true;
+            delta({
+              tool_calls: [{ index: slot.index, function: { arguments: contentStringValue(parsed.delta) ?? "" } }],
+            });
             continue;
           }
           if (parsed.type === "response.function_call_arguments.done") {
-            if (receivedArgumentsDelta) {
+            const keys = toolCallKeysFromEvent(parsed);
+            const slot = toolCalls.resolve(keys) ?? toolCalls.add(keys);
+            if (slot.argumentsSent) {
               continue;
             }
-            controller.enqueue(
-              encodeSseData(
-                chatDelta(
-                  id,
-                  created,
-                  modelName,
-                  {
-                    tool_calls: [
-                      {
-                        index: Math.max(functionCallIndex, 0),
-                        function: { arguments: contentStringValue(parsed.arguments) ?? "" },
-                      },
-                    ],
-                  },
-                  null,
-                ),
-              ),
-            );
+            slot.argumentsSent = true;
+            delta({
+              tool_calls: [{ index: slot.index, function: { arguments: contentStringValue(parsed.arguments) ?? "" } }],
+            });
             continue;
           }
           if (parsed.type === "response.output_item.done") {
@@ -741,89 +712,99 @@ function streamChat(
             if (!item || item.type !== "function_call") {
               continue;
             }
-            const callId = stringValue(item.call_id) ?? stringValue(item.id) ?? "";
-            if (callId !== "" && announcedToolCalls.has(callId)) {
-              announcedToolCalls.delete(callId);
+            const keys = toolCallKeysFromEvent(parsed);
+            const existing = toolCalls.find(keys);
+            if (existing?.announced) {
               continue;
             }
-            functionCallIndex += 1;
-            controller.enqueue(
-              encodeSseData(
-                chatDelta(
-                  id,
-                  created,
-                  modelName,
-                  {
-                    tool_calls: [
-                      {
-                        index: functionCallIndex,
-                        id: callId,
-                        type: "function",
-                        function: {
-                          name: restoreToolName(contentStringValue(item.name) ?? "", nameMap),
-                          arguments: contentStringValue(item.arguments) ?? "",
-                        },
-                      },
-                    ],
+            // Either the call never had an "added" event, or its arguments
+            // arrived before it was announced: emit the identity now.
+            const slot = existing ?? toolCalls.add(keys);
+            const argumentsText = slot.argumentsSent ? "" : (contentStringValue(item.arguments) ?? "");
+            slot.announced = true;
+            slot.argumentsSent = true;
+            delta({
+              tool_calls: [
+                {
+                  index: slot.index,
+                  id: stringValue(item.call_id) ?? stringValue(item.id) ?? "",
+                  type: "function",
+                  function: {
+                    name: restoreToolName(contentStringValue(item.name) ?? "", nameMap),
+                    arguments: argumentsText,
                   },
-                  null,
-                ),
-              ),
-            );
+                },
+              ],
+            });
             continue;
           }
           if (parsed.type === "response.completed") {
             const completed = patchCompletedOutput(parsed, outputItems);
+            const responseValue = responseObject(completed);
             completedSeen = true;
+            scheduleCredentialSuccessUpdate(env, credential.id, response.status);
             scheduleUsageRecord(env, usageContext, {
               credential,
-              response: responseObject(completed),
+              response: responseValue,
               statusCode: response.status,
             });
             scheduleCredentialRateLimitUpdate(env, credential);
             if (!emittedContent) {
-              const text = extractResponseText(responseObject(completed));
+              const text = extractResponseText(responseValue);
               if (text !== "") {
-                controller.enqueue(encodeSseData(chatDelta(id, created, modelName, { content: text }, null)));
+                delta({ content: text });
               }
             }
-            controller.enqueue(
-              encodeSseData(chatDelta(id, created, modelName, {}, functionCallIndex >= 0 ? "tool_calls" : "stop")),
-            );
-            controller.enqueue(encodeSseData("[DONE]"));
+            delta({}, toolCalls.count > 0 ? "tool_calls" : "stop");
+            if (includeUsage) {
+              // OpenAI sends usage as a trailing chunk with an empty choices list.
+              push({ id, object: "chat.completion.chunk", created, model: modelName, choices: [], usage: chatUsage(responseValue) });
+            }
+            push("[DONE]");
             break;
           }
         }
       } catch (error) {
-        await credentialManager(env).reportResult(credential.id, {
-          ok: false,
-          status: 502,
-          message: normalizeErrorMessage(error),
-        });
+        if (cancelled) {
+          recordClientCancelled(env, usageContext, credential);
+          return;
+        }
+        const message = normalizeErrorMessage(error);
+        await manager.reportResult(credential.id, { ok: false, status: 502, message });
         scheduleUsageRecord(env, usageContext, {
           credential,
           statusCode: 502,
           errorCode: "bad_upstream_response",
         });
-        controller.error(error);
+        fail(message, "bad_upstream_response");
+        finish();
+        return;
+      }
+      if (cancelled) {
+        recordClientCancelled(env, usageContext, credential);
         return;
       }
       if (!completedSeen && !terminalErrorSeen) {
-        await credentialManager(env).reportResult(credential.id, {
+        await manager.reportResult(credential.id, {
           ok: false,
           status: 502,
-          message: "upstream stream ended before response.completed",
+          message: STREAM_TRUNCATED_MESSAGE,
         });
         scheduleUsageRecord(env, usageContext, {
           credential,
           statusCode: 502,
           errorCode: "bad_upstream_response",
         });
+        fail(STREAM_TRUNCATED_MESSAGE, "bad_upstream_response");
       }
-      controller.close();
+      finish();
+    },
+    async cancel(reason) {
+      cancelled = true;
+      await reader.cancel(reason).catch(() => undefined);
     },
   });
-  return new Response(body, { status: 200, headers });
+  return new Response(body, { status: response.status, headers });
 }
 
 function chatDelta(
@@ -840,6 +821,22 @@ function chatDelta(
     model,
     choices: [{ index: 0, delta, finish_reason: finishReason }],
   };
+}
+
+function chatUsage(response: JsonValue): JsonObject {
+  const usage = extractTokenUsage(response);
+  const usageOut: JsonObject = {
+    prompt_tokens: usage.inputTokens,
+    completion_tokens: usage.outputTokens,
+    total_tokens: usage.totalTokens,
+  };
+  if (usage.hasCachedTokens) {
+    usageOut.prompt_tokens_details = { cached_tokens: usage.cachedTokens };
+  }
+  if (usage.hasReasoningTokens) {
+    usageOut.completion_tokens_details = { reasoning_tokens: usage.reasoningTokens };
+  }
+  return usageOut;
 }
 
 function chatError(message: string, code: string): JsonObject {

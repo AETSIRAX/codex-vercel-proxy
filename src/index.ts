@@ -15,14 +15,16 @@ import {
   jsonResponse,
   normalizeErrorMessage,
   readJsonObject,
+  RequestBodyError,
   stringValue,
 } from "./utils.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization,content-type,if-none-match,x-api-key,x-client-request-id,x-oai-attestation,x-openai-memgen-request,x-openai-subagent,session-id,thread-id,x-codex-turn-state,x-codex-turn-metadata,x-codex-window-id,x-codex-parent-thread-id,x-codex-installation-id,x-codex-beta-features,x-openai-internal-codex-responses-lite,originator,version",
-  "Access-Control-Expose-Headers": "etag,x-codex-turn-state",
+    "authorization,content-type,if-none-match,x-api-key,x-client-request-id,x-oai-attestation,x-openai-memgen-request,x-openai-subagent,session-id,thread-id,x-codex-turn-state,x-codex-turn-metadata,x-codex-window-id,x-codex-parent-thread-id,x-codex-installation-id,x-codex-beta-features,x-codex-routing-hint,x-openai-internal-codex-responses-lite,originator,version",
+  "Access-Control-Expose-Headers":
+    "etag,x-codex-turn-state,openai-model,x-reasoning-included,x-models-etag,x-request-id,x-codex-promo-message,x-codex-active-limit,x-codex-rate-limit-reached-type",
   "Access-Control-Allow-Methods": "GET,POST,DELETE,HEAD,OPTIONS",
 };
 const DEFAULT_USAGE_RANGE_MS = 24 * 60 * 60 * 1000;
@@ -51,6 +53,9 @@ export async function handleRequest(request: Request, env: AppEnv): Promise<Resp
           : await handleOpenAI(request, env, url);
     return withCors(response);
   } catch (error) {
+    if (error instanceof RequestBodyError) {
+      return withCors(errorResponse(error.status, error.message, error.code));
+    }
     return withCors(errorResponse(500, normalizeErrorMessage(error), "internal_error"));
   }
 }

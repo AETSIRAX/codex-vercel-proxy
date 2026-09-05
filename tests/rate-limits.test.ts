@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { nextResetMillisFromRateLimits } from "../src/rate-limits.js";
+import { nextResetMillisFromRateLimits, parseRateLimitHeaders, parseRateLimitPayload } from "../src/rate-limits.js";
 import type { RateLimitSnapshot } from "../src/types.js";
 
 const nowMs = 1_700_000_000_000;
@@ -94,4 +94,39 @@ test("ignores low remaining windows without a future reset", () => {
   ];
 
   assert.equal(nextResetMillisFromRateLimits(snapshots, nowMs), undefined);
+});
+
+test("payload parsing records spend control state", () => {
+  const snapshots = parseRateLimitPayload({
+    plan_type: "plus",
+    rate_limit: { primary_window: { used_percent: 12, limit_window_seconds: 18000, reset_at: futureReset } },
+    spend_control: { reached: true },
+  });
+
+  assert.equal(snapshots[0]?.spendControlReached, true);
+  assert.equal(snapshots[0]?.planType, "plus");
+  assert.equal(snapshots[0]?.primary?.windowMinutes, 300);
+});
+
+test("header parsing attaches the reached type to the active limit family", () => {
+  const headers = new Headers({
+    "x-codex-primary-used-percent": "40",
+    "x-codex-bengalfox-primary-used-percent": "100",
+    "x-codex-bengalfox-primary-reset-at": String(futureReset),
+    "x-codex-active-limit": "codex_bengalfox",
+    "x-codex-rate-limit-reached-type": "rate_limit_reached",
+  });
+  const snapshots = parseRateLimitHeaders(headers);
+
+  assert.equal(snapshots.find((item) => item.limitId === "codex")?.rateLimitReachedType, undefined);
+  assert.equal(snapshots.find((item) => item.limitId === "codex_bengalfox")?.rateLimitReachedType, "rate_limit_reached");
+});
+
+test("header parsing ignores an all-zero window family", () => {
+  const headers = new Headers({
+    "x-codex-primary-used-percent": "0",
+    "x-codex-primary-window-minutes": "0",
+  });
+
+  assert.deepEqual(parseRateLimitHeaders(headers), []);
 });

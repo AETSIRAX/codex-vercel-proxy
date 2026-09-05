@@ -11,6 +11,9 @@ export interface PrivateCredential {
   email?: string;
   expiresAt?: string;
   lastRefresh?: string;
+  planType?: string;
+  userId?: string;
+  fedramp?: boolean;
 }
 
 export interface CredentialImportResult {
@@ -26,6 +29,8 @@ export interface CredentialStatus {
   status: "available" | "disabled" | "cooldown" | "expired" | "refresh_due" | "invalid";
   accountId?: string;
   email?: string;
+  planType?: string;
+  fedramp?: boolean;
   expiresAt?: string;
   lastRefresh?: string;
   nextRetryAt?: string;
@@ -42,6 +47,7 @@ export interface SelectedCredential {
   label: string;
   token: string;
   accountId?: string;
+  fedramp?: boolean;
 }
 
 export interface RefreshSummary {
@@ -91,4 +97,5 @@ export interface RateLimitSnapshot {
   credits?: CreditsSnapshot;
   planType?: string;
   rateLimitReachedType?: string;
+  spendControlReached?: boolean;
 }

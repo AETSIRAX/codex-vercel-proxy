@@ -91,7 +91,14 @@ interface NormalizedImport {
 interface RefreshStoreResult {
   credential?: PrivateCredential;
   refreshed: boolean;
+  // Another instance holds the refresh lock; nothing was attempted here.
+  lockHeld?: boolean;
 }
+
+// How long recoverUnauthorized waits for a refresh that another instance is
+// performing before giving up on the credential for this request.
+const CONCURRENT_REFRESH_WAIT_ATTEMPTS = 5;
+const CONCURRENT_REFRESH_WAIT_INTERVAL_MS = 1000;
 
 interface RetryDecision {
   nextRetryAt?: number;
@@ -114,8 +121,16 @@ class TokenRefreshError extends Error {
     super(`token refresh failed with HTTP ${status}: ${body}`);
   }
 
+  // Mirrors codex-rs classify_refresh_token_failure: an explicit refresh_token_*
+  // code, HTTP 401, or a 400 invalid_grant all mean the refresh token is dead.
   get permanent(): boolean {
-    return this.code !== undefined && PERMANENT_REFRESH_ERROR_CODES.has(this.code);
+    if (this.status === 401) {
+      return true;
+    }
+    if (this.code === undefined) {
+      return false;
+    }
+    return PERMANENT_REFRESH_ERROR_CODES.has(this.code) || (this.status === 400 && this.code === "invalid_grant");
   }
 }
 
@@ -266,6 +281,7 @@ export class CredentialManager {
           label: row.label,
           token,
           accountId: credential.accountId,
+          fedramp: credential.fedramp,
         };
       } catch (error) {
         exclude.push(row.id);
@@ -304,6 +320,61 @@ export class CredentialManager {
 
     const retry = this.retryForResult(input);
     await this.markFailure(id, input.status, input.message ?? `upstream returned HTTP ${input.status}`, retry);
+  }
+
+  // Codex answers an upstream 401 by refreshing the token and replaying the
+  // request on the same account; only a failed refresh gives up on it. Returns the
+  // refreshed credential, or undefined when the caller should fall back to the
+  // regular failure handling.
+  async recoverUnauthorized(credential: SelectedCredential): Promise<SelectedCredential | undefined> {
+    await ensureSchema(this.sql);
+    const row = await this.rowById(credential.id);
+    if (!row || row.disabled) {
+      return undefined;
+    }
+    try {
+      const current = await this.decryptCredential(row.encryptedJson);
+      // Another instance may already have rotated the token; reuse it instead
+      // of spending a refresh (refresh tokens are single-use).
+      if (hasNewerToken(current, credential.token)) {
+        return selectedCredentialFrom(row, current);
+      }
+      if (!current.refreshToken) {
+        return undefined;
+      }
+      const result = await this.refreshAndStore(row, current, { force: true, enforceMinInterval: false });
+      if (result.refreshed && result.credential !== undefined && hasNewerToken(result.credential, credential.token)) {
+        return selectedCredentialFrom(row, result.credential);
+      }
+      if (result.lockHeld) {
+        // Lock contention is not a refresh failure: wait for the other
+        // instance's token to land and replay with it.
+        return this.awaitConcurrentRefresh(row.id, credential.token);
+      }
+      return undefined;
+    } catch (error) {
+      if (!isPermanentRefreshFailure(error)) {
+        await this.markFailure(row.id, 0, normalizeErrorMessage(error), {
+          retryAfterSeconds: this.failureCooldownSeconds(),
+        });
+      }
+      return undefined;
+    }
+  }
+
+  private async awaitConcurrentRefresh(id: string, staleToken: string): Promise<SelectedCredential | undefined> {
+    for (let attempt = 0; attempt < CONCURRENT_REFRESH_WAIT_ATTEMPTS; attempt += 1) {
+      await sleep(CONCURRENT_REFRESH_WAIT_INTERVAL_MS);
+      const row = await this.rowById(id);
+      if (!row || row.disabled) {
+        return undefined;
+      }
+      const current = await this.decryptCredential(row.encryptedJson);
+      if (hasNewerToken(current, staleToken)) {
+        return selectedCredentialFrom(row, current);
+      }
+    }
+    return undefined;
   }
 
   async refreshRateLimits(credential: SelectedCredential): Promise<RateLimitSnapshot[]> {
@@ -377,6 +448,7 @@ export class CredentialManager {
       label: row.label,
       token: result.credential.accessToken,
       accountId: result.credential.accountId,
+      fedramp: result.credential.fedramp,
     });
     const refreshedRow = (await this.rowById(id)) ?? row;
     return this.statusFromRow(refreshedRow, result.credential);
@@ -484,6 +556,7 @@ export class CredentialManager {
           label: row.label,
           token,
           accountId: credential.accountId,
+          fedramp: credential.fedramp,
         });
         return { refreshed: 1, failed: 0 };
       } catch (error) {
@@ -649,7 +722,12 @@ export class CredentialManager {
     const expiresAt = optionalImportString(input, "expired");
     const lastRefresh = optionalImportString(input, "last_refresh");
     const tokenType = optionalImportString(input, "type");
-    const label = email || accountId || "codex";
+    // Fill identity fields from the id_token the way Codex does on login, so an
+    // import that only carries raw tokens still gets account id, email and plan.
+    const identity = parseJwtIdentity(idToken);
+    const resolvedAccountId = accountId ?? identity.accountId;
+    const resolvedEmail = email ?? identity.email;
+    const label = resolvedEmail || resolvedAccountId || "codex";
     const disabled = booleanValue(input.disabled) ?? false;
 
     return {
@@ -660,10 +738,13 @@ export class CredentialManager {
         refreshToken,
         idToken,
         tokenType,
-        accountId,
-        email,
-        expiresAt,
+        accountId: resolvedAccountId,
+        email: resolvedEmail,
+        expiresAt: expiresAt ?? identity.expiresAt,
         lastRefresh,
+        planType: identity.planType,
+        userId: identity.userId,
+        fedramp: identity.fedramp,
       },
     };
   }
@@ -698,6 +779,8 @@ export class CredentialManager {
       status,
       accountId: credential.accountId,
       email: credential.email,
+      planType: credential.planType,
+      fedramp: credential.fedramp,
       expiresAt: credential.expiresAt,
       lastRefresh: credential.lastRefresh,
       nextRetryAt: isoTime(row.nextRetryAt),
@@ -768,7 +851,7 @@ export class CredentialManager {
                  success_count, failure_count
     `;
     if (locked.length === 0) {
-      return { refreshed: false };
+      return { refreshed: false, lockHeld: true };
     }
     try {
       const lockedRow = normalizeRow(locked[0]);
@@ -796,6 +879,9 @@ export class CredentialManager {
         tokenType: refreshed.token_type ?? current.tokenType,
         accountId: identity.accountId ?? current.accountId,
         email: identity.email ?? current.email,
+        planType: identity.planType ?? current.planType,
+        userId: identity.userId ?? current.userId,
+        fedramp: identity.fedramp ?? current.fedramp,
         expiresAt:
           refreshed.expires_in !== undefined
             ? new Date(refreshedAt + refreshed.expires_in * 1000).toISOString()
@@ -878,7 +964,6 @@ export class CredentialManager {
          SET failure_count = failure_count + 1,
              last_error = ${status > 0 ? `HTTP ${status}: ${message}` : message},
              next_retry_at = ${nextRetryAt},
-             refresh_lock_until = NULL,
              updated_at = ${now}
        WHERE id = ${id}
     `;
@@ -1053,4 +1138,24 @@ function requiredImportString(input: Record<string, unknown>, field: string): st
     throw new Error(`credential JSON must include ${field}`);
   }
   return value;
+}
+
+function hasNewerToken(credential: PrivateCredential, staleToken: string): credential is PrivateCredential & {
+  accessToken: string;
+} {
+  return typeof credential.accessToken === "string" && credential.accessToken !== "" && credential.accessToken !== staleToken;
+}
+
+function selectedCredentialFrom(row: CredentialRow, credential: PrivateCredential & { accessToken: string }): SelectedCredential {
+  return {
+    id: row.id,
+    label: row.label,
+    token: credential.accessToken,
+    accountId: credential.accountId,
+    fedramp: credential.fedramp,
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

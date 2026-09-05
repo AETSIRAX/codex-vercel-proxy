@@ -1,3 +1,5 @@
+import * as zlib from "node:zlib";
+
 import type { JsonObject } from "./types.js";
 
 const encoder = new TextEncoder();
@@ -89,17 +91,84 @@ export function errorResponse(status: number, message: string, code = "worker_pr
   );
 }
 
+// Thrown by readJsonObject when the client's body cannot be used; index.ts maps
+// it to the given HTTP status instead of a generic 500.
+export class RequestBodyError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "RequestBodyError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+const IDENTITY_CONTENT_ENCODINGS = new Set(["", "identity"]);
+
 export async function readJsonObject(request: Request): Promise<JsonObject> {
+  const body = await readRequestBody(request);
   let value: unknown;
   try {
-    value = await request.json();
+    value = JSON.parse(body);
   } catch {
-    throw new Error("request body must be valid JSON");
+    throw new RequestBodyError(400, "invalid_request_body", "request body must be valid JSON");
   }
   if (!isJsonObject(value)) {
-    throw new Error("request body must be a JSON object");
+    throw new RequestBodyError(400, "invalid_request_body", "request body must be a JSON object");
   }
   return value;
+}
+
+// Codex CLI compresses request bodies with zstd (enable_request_compression is
+// on by default for ChatGPT auth). Node's built-in zlib gained zstd in 22.15, so
+// decode here; on older runtimes tell the operator to disable the feature.
+async function readRequestBody(request: Request): Promise<string> {
+  const encoding = (request.headers.get("content-encoding") ?? "").trim().toLowerCase();
+  if (IDENTITY_CONTENT_ENCODINGS.has(encoding)) {
+    return request.text();
+  }
+  const decompress = requestBodyDecoder(encoding);
+  if (decompress === undefined) {
+    throw new RequestBodyError(
+      415,
+      "unsupported_content_encoding",
+      encoding === "zstd"
+        ? `zstd request bodies need Node.js >= 22.15 (running ${process.version}); ` +
+          "set enable_request_compression = false in the Codex client config or upgrade the runtime"
+        : `unsupported Content-Encoding "${encoding}"`,
+    );
+  }
+  const compressed = new Uint8Array(await request.arrayBuffer());
+  try {
+    return bytesToText(decompress(compressed));
+  } catch (error) {
+    throw new RequestBodyError(
+      400,
+      "invalid_request_body",
+      `failed to decode ${encoding} request body: ${normalizeErrorMessage(error)}`,
+    );
+  }
+}
+
+type BodyDecoder = (input: Uint8Array) => Uint8Array;
+
+function requestBodyDecoder(encoding: string): BodyDecoder | undefined {
+  switch (encoding) {
+    case "zstd":
+      // Accessed dynamically so the import still links on runtimes without zstd.
+      return typeof zlib.zstdDecompressSync === "function" ? (input) => zlib.zstdDecompressSync(input) : undefined;
+    case "gzip":
+    case "x-gzip":
+      return (input) => zlib.gunzipSync(input);
+    case "deflate":
+      return (input) => zlib.inflateSync(input);
+    case "br":
+      return (input) => zlib.brotliDecompressSync(input);
+    default:
+      return undefined;
+  }
 }
 
 export async function sha256Hex(input: string): Promise<string> {

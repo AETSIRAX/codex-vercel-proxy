@@ -9,7 +9,9 @@ const OPENAI_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
-const CODEX_SCOPE = "openid email profile offline_access";
+// Codex CLI (codex-rs/login/src/server.rs) requests the connector scopes as well.
+const CODEX_SCOPE = "openid profile email offline_access api.connectors.read api.connectors.invoke";
+const CODEX_ORIGINATOR = "codex_cli_rs";
 const PKCE_VERIFIER_BYTES = 96;
 const STATE_BYTES = 32;
 
@@ -75,9 +77,12 @@ export function buildAuthUrl(state: string, codeChallenge: string): string {
     state,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
+    // Codex CLI does not force a fresh login; the console keeps `prompt=login`
+    // so operators can import several accounts from one browser session.
     prompt: "login",
     id_token_add_organizations: "true",
     codex_cli_simplified_flow: "true",
+    originator: CODEX_ORIGINATOR,
   });
   return `${OPENAI_AUTHORIZE_URL}?${params.toString()}`;
 }

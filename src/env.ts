@@ -17,10 +17,10 @@ export interface AppEnv {
 }
 
 export const CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
-// Exact CLI version bundled with the currently verified Codex App. Requests from
-// Codex clients keep their own Version header, so App upgrades do not depend on
-// this default being updated first.
-export const DEFAULT_CODEX_CLI_VERSION = "0.146.0-alpha.3.1";
+// Latest stable Codex release verified against upstream (rust-v0.153.4). It only
+// feeds the generated User-Agent and the /models client_version default; Codex
+// clients carry their own identity, so App upgrades do not depend on it.
+export const DEFAULT_CODEX_CLI_VERSION = "0.153.4";
 
 export function loadEnv(): AppEnv {
   return process.env;
@@ -46,7 +46,7 @@ export function codexBaseURL(): string {
 }
 
 export function configuredModels(env: AppEnv): string[] {
-  return (env.MODELS || "gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4")
+  return (env.MODELS || "gpt-6-astra,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4")
     .split(",")
     .map((model) => model.trim())
     .filter((model) => model !== "");

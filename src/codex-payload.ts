@@ -1,26 +1,31 @@
+import { isResponsesLiteModel, reasoningEffortForRequest, supportedServiceTiers } from "./codex-models.js";
 import type { ProxySettings } from "./settings.js";
 import type { JsonObject, JsonValue } from "./types.js";
-import { isRecord, stringValue } from "./utils.js";
+import { isRecord, stringValue, uuidV5 } from "./utils.js";
 
-// gpt-5.6 models use the upstream "responses lite" protocol: requests carry the
-// x-openai-internal-codex-responses-lite header, parallel_tool_calls false and
-// reasoning.context "all_turns"; client-executed tools and instructions travel
-// inside `input` as an additional_tools item and a developer message.
-const RESPONSES_LITE_MODEL_PREFIX = "gpt-5.6";
-// The lite upstream only supports client-executed tools ("only supports function
-// tools, custom tools, and client-executed tool search"); hosted tools such as
-// web_search stay top-level so the upstream rejects them with that explicit error
-// instead of the model silently not seeing the tool.
-const RESPONSES_LITE_CLIENT_TOOL_TYPES = new Set(["function", "custom"]);
+export { isResponsesLiteModel } from "./codex-models.js";
 
-export function isResponsesLiteModel(model: string | undefined): boolean {
-  return (
-    model !== undefined &&
-    (model === RESPONSES_LITE_MODEL_PREFIX || model.startsWith(`${RESPONSES_LITE_MODEL_PREFIX}-`))
-  );
+export interface PayloadIdentity {
+  // Thread id Codex derives the lite prefix item ids from. The proxy uses the
+  // client's thread-id header, falling back to the prompt cache key.
+  threadId?: string;
+  promptCacheKey?: string;
 }
 
-export function prepareCodexPayload(input: JsonObject, forceStream: boolean, settings: ProxySettings): JsonObject {
+// Responses Lite models (see codex-models.ts) use the upstream "responses lite"
+// protocol: requests carry the x-openai-internal-codex-responses-lite header,
+// parallel_tool_calls false and reasoning.context "all_turns"; tools and
+// instructions travel inside `input` as an additional_tools item and a developer
+// message instead of the top-level fields.
+const DEFAULT_FUNCTION_NAMESPACE = "functions";
+const SERVICE_TIER_DEFAULT_REQUEST_VALUE = "default";
+
+export async function prepareCodexPayload(
+  input: JsonObject,
+  forceStream: boolean,
+  settings: ProxySettings,
+  identity: PayloadIdentity = {},
+): Promise<JsonObject> {
   const payload = structuredClone(input) as JsonObject;
   if (typeof payload.input === "string") {
     payload.input = [{ type: "message", role: "user", content: [{ type: "input_text", text: payload.input }] }];
@@ -41,9 +46,9 @@ export function prepareCodexPayload(input: JsonObject, forceStream: boolean, set
   delete payload.truncation;
   delete payload.context_management;
   delete payload.user;
-  delete payload.service_tier;
-  if (settings.fastMode) {
-    payload.service_tier = "priority";
+  applyServiceTier(payload, stringValue(input.service_tier), settings);
+  if (identity.promptCacheKey !== undefined) {
+    payload.prompt_cache_key = identity.promptCacheKey;
   }
   normalizeResponsesInputRoles(payload);
   normalizeCodexBuiltinTools(payload);
@@ -53,30 +58,48 @@ export function prepareCodexPayload(input: JsonObject, forceStream: boolean, set
   normalizeReasoningEffort(payload);
   normalizeStreamOptions(payload);
   if (isResponsesLiteModel(stringValue(payload.model))) {
-    applyResponsesLiteFormat(payload);
+    await applyResponsesLiteFormat(payload, identity.threadId);
   }
   normalizeReasoningInclude(payload);
   return payload;
 }
 
+// A client-supplied tier wins (an explicit "default" opts out of Fast mode); the
+// dashboard Fast mode only fills in when the client is silent. Like Codex, tiers
+// the model catalog does not list for the model are dropped.
+function applyServiceTier(payload: JsonObject, requested: string | undefined, settings: ProxySettings): void {
+  delete payload.service_tier;
+  const tier = requested ?? (settings.fastMode ? "priority" : undefined);
+  if (tier === undefined || tier === SERVICE_TIER_DEFAULT_REQUEST_VALUE) {
+    return;
+  }
+  const supported = supportedServiceTiers(stringValue(payload.model));
+  if (supported !== undefined && !supported.includes(tier)) {
+    return;
+  }
+  payload.service_tier = tier;
+}
+
+// Codex always asks for encrypted reasoning content so reasoning survives
+// store=false across turns, whether or not the request carries a reasoning block.
 function normalizeReasoningInclude(payload: JsonObject): void {
   const include = Array.isArray(payload.include) ? payload.include : [];
   const filtered = include.filter((item) => item !== "reasoning.encrypted_content") as JsonValue[];
-  if (isRecord(payload.reasoning)) {
-    filtered.push("reasoning.encrypted_content");
-  }
-  if (filtered.length > 0) {
-    payload.include = filtered;
-  } else {
-    delete payload.include;
-  }
+  filtered.push("reasoning.encrypted_content");
+  payload.include = filtered;
 }
 
-// "ultra" is a codex client-side reasoning level; the upstream wire value is "max".
+// "ultra" and "persistent" are codex client-side reasoning levels; the wire value
+// depends on the model (see reasoningEffortForRequest).
 function normalizeReasoningEffort(payload: JsonObject): void {
-  if (isRecord(payload.reasoning) && payload.reasoning.effort === "ultra") {
-    payload.reasoning.effort = "max";
+  if (!isRecord(payload.reasoning)) {
+    return;
   }
+  const effort = stringValue(payload.reasoning.effort);
+  if (effort === undefined) {
+    return;
+  }
+  payload.reasoning.effort = reasoningEffortForRequest(stringValue(payload.model), effort);
 }
 
 function normalizeStreamOptions(payload: JsonObject): void {
@@ -88,7 +111,7 @@ function normalizeStreamOptions(payload: JsonObject): void {
   delete payload.stream_options;
 }
 
-function applyResponsesLiteFormat(payload: JsonObject): void {
+async function applyResponsesLiteFormat(payload: JsonObject, threadId: string | undefined): Promise<void> {
   payload.parallel_tool_calls = false;
   // The lite upstream rejects requests without reasoning.context "all_turns".
   const reasoning = isRecord(payload.reasoning) ? payload.reasoning : {};
@@ -101,35 +124,79 @@ function applyResponsesLiteFormat(payload: JsonObject): void {
     stripImageDetails(input);
   }
   if (input === undefined || input.some((item) => isRecord(item) && item.type === "additional_tools")) {
+    // Lite-aware clients (Codex itself) already shaped the input.
+    dropEmptyInstructions(payload);
     return;
   }
-  const prefix: JsonValue[] = [];
-  const tools = Array.isArray(payload.tools) ? payload.tools : undefined;
-  if (tools !== undefined && tools.length > 0) {
-    const isClientTool = (tool: JsonValue): boolean =>
-      isRecord(tool) && RESPONSES_LITE_CLIENT_TOOL_TYPES.has(stringValue(tool.type) ?? "");
-    const clientTools = tools.filter(isClientTool);
-    const hostedTools = tools.filter((tool) => !isClientTool(tool));
-    if (clientTools.length > 0) {
-      prefix.push({ type: "additional_tools", role: "developer", tools: clientTools });
-    }
-    if (hostedTools.length > 0) {
-      payload.tools = hostedTools;
-    } else {
-      delete payload.tools;
-    }
+  // Codex rebuilds these prompt-only items on every request and hashes their
+  // payload within the thread into stable ids, so retries and resumed sessions
+  // keep the same prefix (core/src/client.rs build_responses_request).
+  const prefixNamespace = threadId === undefined ? undefined : (await uuidV5(threadId)).replaceAll("-", "");
+  const tools = buildResponsesLiteTools(Array.isArray(payload.tools) ? payload.tools : []);
+  const additionalTools: JsonObject = { type: "additional_tools", role: "developer", tools };
+  if (prefixNamespace !== undefined) {
+    additionalTools.id = `at_${await uuidV5(JSON.stringify(tools), prefixNamespace)}`;
   }
-  const instructions = stringValue(payload.instructions);
-  if (instructions !== undefined && instructions !== "") {
-    prefix.push({
+  const prefix: JsonValue[] = [additionalTools];
+  delete payload.tools;
+  const instructions = typeof payload.instructions === "string" ? payload.instructions : "";
+  if (instructions !== "") {
+    const message: JsonObject = {
       type: "message",
       role: "developer",
       content: [{ type: "input_text", text: instructions }],
-    });
-    payload.instructions = "";
+    };
+    if (prefixNamespace !== undefined) {
+      message.id = `msg_${await uuidV5(instructions, prefixNamespace)}`;
+    }
+    prefix.push(message);
   }
-  if (prefix.length > 0) {
-    input.unshift(...prefix);
+  // Codex never sends top-level instructions on lite requests: they either moved
+  // into the developer message above or were empty to begin with.
+  delete payload.instructions;
+  input.unshift(...prefix);
+}
+
+// Mirrors codex-tools create_tools_json_for_responses_lite: function and custom
+// tools are grouped into the "functions" namespace at the position of the first
+// such tool, everything else keeps its place, and the whole list travels inside
+// the additional_tools item.
+function buildResponsesLiteTools(tools: JsonValue[]): JsonValue[] {
+  const namespace: JsonObject = { type: "namespace", name: DEFAULT_FUNCTION_NAMESPACE, description: "", tools: [] };
+  const namespaceTools: JsonValue[] = [];
+  let namespaceIndex: number | undefined;
+  const out: JsonValue[] = [];
+  for (const tool of tools) {
+    if (!isRecord(tool)) {
+      continue;
+    }
+    const type = stringValue(tool.type);
+    if (type === "function" || type === "custom") {
+      namespaceTools.push(tool);
+    } else if (type === "namespace" && tool.name === DEFAULT_FUNCTION_NAMESPACE) {
+      const description = stringValue(tool.description);
+      if (description !== undefined) {
+        namespace.description = description;
+      }
+      if (Array.isArray(tool.tools)) {
+        namespaceTools.push(...tool.tools);
+      }
+    } else {
+      out.push(tool);
+      continue;
+    }
+    namespaceIndex ??= out.length;
+  }
+  if (namespaceIndex !== undefined && namespaceTools.length > 0) {
+    namespace.tools = namespaceTools;
+    out.splice(namespaceIndex, 0, namespace);
+  }
+  return out;
+}
+
+function dropEmptyInstructions(payload: JsonObject): void {
+  if (typeof payload.instructions !== "string" || payload.instructions === "") {
+    delete payload.instructions;
   }
 }
 

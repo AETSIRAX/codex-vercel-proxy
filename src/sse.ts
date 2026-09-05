@@ -6,7 +6,15 @@ export interface SseDataEvent {
 }
 
 export async function* readSseData(stream: ReadableStream<Uint8Array>): AsyncGenerator<SseDataEvent> {
-  const reader = stream.getReader();
+  yield* readSseDataFromReader(stream.getReader());
+}
+
+// Reading through a caller-owned reader lets the caller cancel the upstream
+// body (reader.cancel) when its own consumer goes away; the loop then ends the
+// same way a normal EOF does.
+export async function* readSseDataFromReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): AsyncGenerator<SseDataEvent> {
   const decoder = new TextDecoder();
   let buffer = "";
   let dataLines: string[] = [];

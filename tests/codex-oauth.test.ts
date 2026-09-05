@@ -33,13 +33,17 @@ test("auth url carries the codex oauth parameters", () => {
   assert.equal(params.get("response_type"), "code");
   assert.equal(params.get("client_id"), "app_EMoamEEZ73f0CkXaXp7hrann");
   assert.equal(params.get("redirect_uri"), "http://localhost:1455/auth/callback");
-  assert.equal(params.get("scope"), "openid email profile offline_access");
+  assert.equal(
+    params.get("scope"),
+    "openid profile email offline_access api.connectors.read api.connectors.invoke",
+  );
   assert.equal(params.get("state"), "state-123");
   assert.equal(params.get("code_challenge"), "challenge-abc");
   assert.equal(params.get("code_challenge_method"), "S256");
   assert.equal(params.get("prompt"), "login");
   assert.equal(params.get("id_token_add_organizations"), "true");
   assert.equal(params.get("codex_cli_simplified_flow"), "true");
+  assert.equal(params.get("originator"), "codex_cli_rs");
 });
 
 test("startCodexOAuth returns a consistent verifier/challenge pair", async () => {

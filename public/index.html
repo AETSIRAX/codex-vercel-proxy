@@ -2425,7 +2425,7 @@
               <div class="setting-row">
                 <div>
                   <div class="setting-title">Fast mode</div>
-                  <div class="setting-copy">开启后上游请求写入 <span class="mono">service_tier = "priority"</span>，关闭后不发送该字段。</div>
+                  <div class="setting-copy">客户端未传 <span class="mono">service_tier</span> 时的兜底：开启后写入 <span class="mono">priority</span>，关闭后不发送；客户端显式传入的值始终优先，模型不支持的 tier 会被丢弃。</div>
                 </div>
                 <div class="setting-control-group">
                   <span class="badge ok" id="fast-mode-status">已开启</span>
@@ -3600,7 +3600,7 @@
             state.credentialFilter === "all" ||
             item.status === state.credentialFilter ||
             (state.credentialFilter === "refresh_due" && item.status === "expired");
-          const text = [item.id, item.label, item.email, item.accountId, item.status, STATUS_TEXT[item.status], item.lastError]
+          const text = [item.id, item.label, item.email, item.accountId, item.planType, item.status, STATUS_TEXT[item.status], item.lastError]
             .filter(Boolean)
             .join(" ")
             .toLowerCase();
@@ -3630,7 +3630,13 @@
           node("div", "avatar mono", initials(item.label || item.email || item.id)),
           block("div", [
             node("div", "id-title", item.label || "-"),
-            node("div", "id-sub", item.email && item.email !== item.label ? item.email : item.accountId || ""),
+            node(
+              "div",
+              "id-sub",
+              [item.email && item.email !== item.label ? item.email : item.accountId || "", item.planType || ""]
+                .filter(Boolean)
+                .join(" · "),
+            ),
             node("div", "id-string", item.id || "-"),
           ], "id-main"),
         );

@@ -80,7 +80,7 @@ curl -i "https://<vercel-domain>/healthz"
 
 ## GET /v1/models
 
-普通请求返回 `MODELS` 环境变量配置的 OpenAI 格式模型列表。未配置时默认返回 `gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4`。
+普通请求返回 `MODELS` 环境变量配置的 OpenAI 格式模型列表。未配置时默认返回 `gpt-6-astra,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4`。
 
 Codex CLI 携带 `client_version` 查询参数时，请求会转发到 Codex 原生 `/models` 端点，响应保持 `{"models":[...]}` 格式，并透传 `If-None-Match`/`ETag` 缓存语义。
 
@@ -133,7 +133,7 @@ curl "https://<vercel-domain>/v1/models" \
 
 ## Codex 后端扩展接口
 
-以下接口选择 Codex 凭证、附加 ChatGPT 账号头，并沿用 `401`、`403`、`429`、`5xx` 凭证轮换规则：
+以下接口选择 Codex 凭证、附加 ChatGPT 账号头，并沿用 `401`（先刷新 token 原凭证重试）、`403`、`429`、`5xx` 凭证轮换规则：
 
 | 代理路径 | 上游路径 | 用途 |
 | --- | --- | --- |
@@ -213,6 +213,8 @@ data: {"type":"response.output_text.delta","delta":"Hello",...}
 data: {"type":"response.completed","response":{...}}
 ```
 
+上游在 `response.completed` 或 `response.failed` 之前断开时，代理会补发一个 `data: {"type":"error","code":"bad_upstream_response","message":"..."}` 事件再结束流，而不是让流看起来正常完成；Chat Completions 对应输出一个 `error` chunk 后跟 `[DONE]`。客户端主动断开连接时，代理会立即取消上游请求，不计入凭证失败。
+
 ### Responses 请求处理规则
 
 转发前会执行以下处理：
@@ -223,12 +225,14 @@ data: {"type":"response.completed","response":{...}}
 | `stream` | 强制上游为 `true` |
 | `store` | 强制为 `false` |
 | `parallel_tool_calls` | 强制为 `true`；Responses Lite 模型固定为 `false` |
-| `include` | 仅在请求包含 `reasoning` 时包含 `["reasoning.encrypted_content"]` |
+| `include` | 总是追加 `"reasoning.encrypted_content"`（与 Codex CLI 一致），其他 include 值保留 |
+| `reasoning.effort` | `ultra` 按模型目录映射为该模型的 `multi_agent_reasoning_effort`，否则 `max`，再否则该模型最高的非 ultra 等级；`persistent` 映射为 `disabled` |
 | `prompt_cache_key` | 显式传入时原样保留；缺省时按代理密钥生成稳定 UUID，并作为默认上游 `session-id`、`thread-id` |
 | `input[].role="system"` | 改为 `developer` |
 | `instructions` 缺失或 `null` | 改为空字符串 |
 | `web_search_preview`、`web_search_preview_2025_03_11` | 改为 `web_search` |
-| `service_tier` | 由控制面板 Fast mode 决定；开启时写入 `priority`，关闭时不发送该字段 |
+| `service_tier` | 客户端显式传入时优先（`default` 视为不发送）；未传入时由控制面板 Fast mode 兜底写入 `priority`。最终值按 Codex 模型目录过滤，模型不支持的 tier 会被丢弃 |
+| Responses Lite 工具与指令 | `input` 中没有 `additional_tools` 项时：`function`、`custom` 工具包进 `functions` namespace，与其他工具一起组成 `additional_tools` 项前置到 `input`，非空 `instructions` 转为 developer 消息；两者带有由 `thread-id` 派生的稳定 id（`at_`、`msg_` 前缀）；顶层 `tools`、`instructions` 不发送 |
 | `stream_options.reasoning_summary_delivery` | 仅保留 Codex 当前支持的 `sequential_cutoff`，删除其他值和额外字段 |
 | 图片 `detail` | Responses Lite 请求会从 message、`function_call_output`、`custom_tool_call_output` 的 `input_image` 中删除 |
 
@@ -255,9 +259,13 @@ user
 - `session-id` 和 `thread-id`：客户端显式传入时使用请求头值；否则使用 `prompt_cache_key` 或代理按 API KEY 生成的稳定 UUID。
 - `X-Client-Request-Id`：客户端显式传入 `x-client-request-id` 时使用该值；否则使用当前 `thread-id`。
 - `originator`：客户端显式传入时使用该值；否则为 `codex_cli_rs`。
-- `User-Agent`：客户端显式传入时原样转发；否则生成 `codex_cli_rs/<有效版本>`。旧的 `USER_AGENT` 环境变量不再参与请求构造。
-- `version`：客户端显式传入时原样转发；否则使用 `CODEX_CLI_VERSION`，未配置时使用当前默认版本 `0.146.0-alpha.3.1`。
+- `User-Agent`：客户端显式传入时原样转发；否则生成 `codex_cli_rs/<CODEX_CLI_VERSION>`（默认 `0.153.4`）。旧的 `USER_AGENT` 环境变量不再参与请求构造。
+- `version`：客户端显式传入时原样转发；否则不发送（当前 Codex CLI 已不再发送该请求头）。
+- `x-codex-routing-hint`：客户端显式传入时透传；否则按 `model=<slug>[;tier=<service_tier>]` 生成。
+- `X-OpenAI-Fedramp: true`：凭证 id_token 标记为 FedRAMP 账号时附加。
 - `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`：存在时透传给上游。
+- 请求体 `Content-Encoding`：支持 `zstd`（Codex CLI 默认压缩方式，需要 Node.js 22.15+）、`gzip`、`deflate`、`br`；无法解压时返回 `415 unsupported_content_encoding`，请求体损坏或不是 JSON 对象时返回 `400 invalid_request_body`。
+- 上游响应头 `x-codex-turn-state`、`openai-model`、`x-reasoning-included`、`x-models-etag`、`x-request-id`、`x-codex-promo-message`、`x-codex-active-limit`、`x-codex-rate-limit-reached-type` 会原样返回给客户端。
 多凭据场景下，服务会按 Codex 会话头选择 Codex 凭据。粘连键只来自 `session-id`，没有该头时使用 `thread-id`；没有这两个请求头时保留原有按 `last_used_at` 选择凭据的行为。同一粘连键通常会落到同一凭据，凭据不可用或上游返回可轮换错误时才切换备用凭据。
 
 ## POST /v1/chat/completions
@@ -470,7 +478,7 @@ curl "https://<vercel-domain>/admin/settings" \
 }
 ```
 
-`fastMode` 默认为 `true`。开启时，服务会向 Codex 上游发送 `service_tier="priority"`；关闭时，服务不会发送 `service_tier`。多凭据部署会按 `session-id`、`thread-id` 做凭据粘连，以减少同一会话被轮转拆分成多套上游缓存键。
+`fastMode` 默认为 `true`。它只在客户端没有传 `service_tier` 时生效：开启时兜底写入 `service_tier="priority"`，关闭时不发送该字段；客户端显式传入的 `service_tier` 始终优先（`default` 视为不发送）。最终值会按 Codex 模型目录过滤，模型不支持的 tier 不会发送。多凭据部署会按 `session-id`、`thread-id` 做凭据粘连，以减少同一会话被轮转拆分成多套上游缓存键。
 
 API KEY 和 ADMIN KEY 明文只用于写入，接口响应只返回脱敏后的 `display`。
 
@@ -898,7 +906,8 @@ curl "https://<vercel-domain>/cron/cleanup" \
 
 ```http
 Access-Control-Allow-Origin: *
-Access-Control-Allow-Headers: authorization,content-type,x-api-key,x-client-request-id,session-id,thread-id,x-codex-turn-state,x-codex-turn-metadata,x-codex-window-id,x-codex-parent-thread-id,x-codex-installation-id,x-codex-beta-features,originator,version
+Access-Control-Allow-Headers: authorization,content-type,if-none-match,x-api-key,x-client-request-id,x-oai-attestation,x-openai-memgen-request,x-openai-subagent,session-id,thread-id,x-codex-turn-state,x-codex-turn-metadata,x-codex-window-id,x-codex-parent-thread-id,x-codex-installation-id,x-codex-beta-features,x-codex-routing-hint,x-openai-internal-codex-responses-lite,originator,version
+Access-Control-Expose-Headers: etag,x-codex-turn-state,openai-model,x-reasoning-included,x-models-etag,x-request-id,x-codex-promo-message,x-codex-active-limit,x-codex-rate-limit-reached-type
 Access-Control-Allow-Methods: GET,POST,DELETE,HEAD,OPTIONS
 ```
 

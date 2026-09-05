@@ -1,16 +1,27 @@
-import { credentialManager, scheduleCredentialRateLimitUpdate, scheduleCredentialSuccessUpdate } from "./credential-manager.js";
+import {
+  credentialManager,
+  scheduleCredentialRateLimitUpdate,
+  scheduleCredentialSuccessUpdate,
+  type CredentialManager,
+} from "./credential-manager.js";
 import { resolveCodexCredentialAffinityKey } from "./codex-affinity.js";
 import {
   buildCodexEndpointUrl,
   buildCodexRequestHeaders,
+  buildCodexRoutingHint,
   type CodexJsonEndpointPath,
 } from "./codex-endpoint.js";
 import { codexBaseURL } from "./env.js";
 import type { AppEnv } from "./env.js";
+import {
+  responseMetadataHeaders,
+  responseStreamError,
+  type ResponseStreamError,
+} from "./codex-errors.js";
 import { isResponsesLiteModel, prepareCodexPayload } from "./codex-payload.js";
 import { isUsageLimitErrorType, parseRateLimitHeaders } from "./rate-limits.js";
 import { settingsStore } from "./settings.js";
-import { readSseData, encodeSseData, parseSseJson } from "./sse.js";
+import { readSseData, readSseDataFromReader, encodeSseData, parseSseJson } from "./sse.js";
 import type { JsonObject, JsonValue, SelectedCredential } from "./types.js";
 import { createUsageContext, scheduleUsageRecord, type UsageContext } from "./usage.js";
 import {
@@ -30,21 +41,17 @@ export interface OutputItem {
   item: unknown;
 }
 
-export interface ResponseStreamError {
-  code: string;
-  errorType?: string;
-  message: string;
-  status: number;
-}
+export { responseMetadataHeaders, responseStreamError, type ResponseStreamError } from "./codex-errors.js";
 
 interface UpstreamResult {
   response: Response;
   credential: SelectedCredential;
 }
 
-interface RequestIdentity {
+export interface RequestIdentity {
   sessionId: string;
   threadId: string;
+  promptCacheKey: string;
 }
 
 interface UpstreamErrorSummary {
@@ -59,13 +66,14 @@ const MAX_CREDENTIAL_ATTEMPTS = 8;
 export async function proxyResponses(request: Request, env: AppEnv, input: JsonObject): Promise<Response> {
   const wantsStream = input.stream === true;
   const settings = await settingsStore(env).getSettings();
-  const payload = prepareCodexPayload(input, true, settings);
+  const identity = await resolveRequestIdentity(request, input);
+  const payload = await prepareCodexPayload(input, true, settings, identity);
   const usageContext = createUsageContext(request, {
     endpoint: "/v1/responses",
     model: stringValue(payload.model),
     stream: wantsStream,
   });
-  const upstream = await fetchCodexWithRotation(request, env, payload, true);
+  const upstream = await fetchCodexWithRotation(request, env, payload, true, identity);
   if (upstream instanceof Response) {
     scheduleUsageRecord(env, usageContext, {
       statusCode: upstream.status,
@@ -92,17 +100,19 @@ export async function proxyCodexJsonEndpoint(
   const affinityKey = resolveCodexCredentialAffinityKey(request);
 
   for (let attempt = 0; attempt < MAX_CREDENTIAL_ATTEMPTS; attempt += 1) {
-    let credential: SelectedCredential | null;
+    let selected: SelectedCredential | null;
     try {
-      credential = await manager.selectCredential({ excludedIds: excluded, affinityKey });
+      selected = await manager.selectCredential({ excludedIds: excluded, affinityKey });
     } catch (error) {
       return errorResponse(503, normalizeErrorMessage(error), "credential_unavailable");
     }
-    if (credential === null) {
-      return errorResponse(503, "no available codex credential", "credential_unavailable");
+    if (selected === null) {
+      return lastError ?? errorResponse(503, "no available codex credential", "credential_unavailable");
     }
 
-    const upstream = await fetchCodexJsonEndpointOnce(request, env, credential, path, input, query);
+    const { response: upstream, credential } = await fetchWithUnauthorizedRecovery(manager, selected, (candidate) =>
+      fetchCodexJsonEndpointOnce(request, env, candidate, path, input, query),
+    );
     if (upstream.ok || upstream.status === 304) {
       scheduleCredentialSuccessUpdate(env, credential.id, upstream.status);
       scheduleCredentialRateLimitUpdate(env, credential);
@@ -150,27 +160,30 @@ export async function fetchCodexWithRotation(
   env: AppEnv,
   payload: JsonObject,
   stream: boolean,
+  identity: RequestIdentity,
 ): Promise<UpstreamResult | Response> {
   const manager = credentialManager(env);
   const excluded: string[] = [];
   let lastError: Response | undefined;
   const affinityKey = resolveCodexCredentialAffinityKey(request);
-  const identity = await ensureRequestIdentity(request, payload);
 
   for (let attempt = 0; attempt < MAX_CREDENTIAL_ATTEMPTS; attempt += 1) {
-    let credential: SelectedCredential | null;
+    let selected: SelectedCredential | null;
     try {
-      credential = await manager.selectCredential({ excludedIds: excluded, affinityKey });
+      selected = await manager.selectCredential({ excludedIds: excluded, affinityKey });
     } catch (error) {
       return errorResponse(503, normalizeErrorMessage(error), "credential_unavailable");
     }
-    if (credential === null) {
-      return errorResponse(503, "no available codex credential", "credential_unavailable");
+    if (selected === null) {
+      return lastError ?? errorResponse(503, "no available codex credential", "credential_unavailable");
     }
 
-    const upstream = await fetchCodexOnce(request, env, credential, payload, stream, identity);
+    const { response: upstream, credential } = await fetchWithUnauthorizedRecovery(manager, selected, (candidate) =>
+      fetchCodexOnce(request, env, candidate, payload, stream, identity),
+    );
     if (upstream.ok) {
-      scheduleCredentialSuccessUpdate(env, credential.id, upstream.status);
+      // Success is recorded by the stream consumers once response.completed
+      // arrives; an HTTP 200 alone can still end in a truncated stream.
       return { response: upstream, credential };
     }
 
@@ -225,12 +238,11 @@ async function fetchCodexOnce(
   if (isResponsesLiteModel(stringValue(payload.model))) {
     headers.set("X-OpenAI-Internal-Codex-Responses-Lite", "true");
   }
-  const sessionId = request.headers.get("session-id")?.trim() || identity.sessionId;
-  const threadId = request.headers.get("thread-id")?.trim() || identity.threadId;
-  headers.set("X-Client-Request-Id", request.headers.get("x-client-request-id")?.trim() || threadId);
+  applyRoutingHint(headers, payload);
+  headers.set("X-Client-Request-Id", request.headers.get("x-client-request-id")?.trim() || identity.threadId);
   headers.set("originator", request.headers.get("originator")?.trim() || "codex_cli_rs");
-  headers.set("session-id", sessionId);
-  headers.set("thread-id", threadId);
+  headers.set("session-id", identity.sessionId);
+  headers.set("thread-id", identity.threadId);
   return fetch(`${baseURL}/responses`, {
     method: "POST",
     headers,
@@ -248,11 +260,44 @@ async function fetchCodexJsonEndpointOnce(
 ): Promise<Response> {
   const url = buildCodexEndpointUrl(path, query);
   const headers = buildCodexRequestHeaders(request, env, credential, "application/json", input !== undefined);
+  if (path === "responses/compact" && input !== undefined) {
+    applyRoutingHint(headers, input);
+  }
   return fetch(url, {
     method: request.method,
     headers,
     body: input === undefined ? undefined : JSON.stringify(input),
   });
+}
+
+function applyRoutingHint(headers: Headers, payload: JsonObject): void {
+  if (headers.has("X-Codex-Routing-Hint")) {
+    return;
+  }
+  const hint = buildCodexRoutingHint(stringValue(payload.model), stringValue(payload.service_tier));
+  if (hint !== undefined) {
+    headers.set("X-Codex-Routing-Hint", hint);
+  }
+}
+
+// Codex recovers from an upstream 401 by refreshing the token and replaying the
+// request on the same account before treating the account as failed. Only when
+// that recovery fails does the proxy fall through to cooldown and rotation.
+async function fetchWithUnauthorizedRecovery(
+  manager: CredentialManager,
+  credential: SelectedCredential,
+  send: (credential: SelectedCredential) => Promise<Response>,
+): Promise<{ response: Response; credential: SelectedCredential }> {
+  const response = await send(credential);
+  if (response.status !== 401) {
+    return { response, credential };
+  }
+  const recovered = await manager.recoverUnauthorized(credential);
+  if (recovered === undefined) {
+    return { response, credential };
+  }
+  await response.body?.cancel().catch(() => undefined);
+  return { response: await send(recovered), credential: recovered };
 }
 
 function passThroughCodexResponse(response: Response): Response {
@@ -280,52 +325,29 @@ function normalizedUpstreamHeaders(source: Headers): Headers {
   return headers;
 }
 
-async function ensureRequestIdentity(request: Request, payload: JsonObject): Promise<RequestIdentity> {
-  const explicit = stringValue(payload.prompt_cache_key);
-  const explicitTrimmed = explicit?.trim();
-  if (explicitTrimmed) {
-    payload.prompt_cache_key = explicitTrimmed;
-    return {
-      sessionId: explicitTrimmed,
-      threadId: explicitTrimmed,
-    };
+// Session and thread ids follow the Codex client's own headers when present;
+// other clients get a stable prompt cache key derived from their auth identity
+// that doubles as both ids, so prompt caching and lite prefix ids stay stable
+// across turns.
+export async function resolveRequestIdentity(request: Request, input: JsonObject): Promise<RequestIdentity> {
+  const promptCacheKey = await resolvePromptCacheKey(request, input);
+  return {
+    sessionId: request.headers.get("session-id")?.trim() || promptCacheKey,
+    threadId: request.headers.get("thread-id")?.trim() || promptCacheKey,
+    promptCacheKey,
+  };
+}
+
+async function resolvePromptCacheKey(request: Request, input: JsonObject): Promise<string> {
+  const explicit = stringValue(input.prompt_cache_key)?.trim();
+  if (explicit) {
+    return explicit;
   }
   const identity = requestAuthIdentity(request);
   if (identity === undefined) {
     throw new Error("request auth identity is required");
   }
-  const cacheKey = await uuidV5(`${PROMPT_CACHE_NAME_PREFIX}${identity}`);
-  payload.prompt_cache_key = cacheKey;
-  return {
-    sessionId: cacheKey,
-    threadId: cacheKey,
-  };
-}
-
-export function responseStreamError(event: JsonObject): ResponseStreamError | undefined {
-  if (event.type === "response.failed") {
-    const response = isRecord(event.response) ? event.response : undefined;
-    const error = isRecord(response?.error) ? response.error : undefined;
-    const code = stringValue(error?.code) ?? "response_failed";
-    const errorType = stringValue(error?.type);
-    return {
-      code,
-      errorType,
-      message: stringValue(error?.message) ?? "response.failed event received",
-      status: responseErrorStatus(code, errorType),
-    };
-  }
-  if (event.type === "response.incomplete") {
-    const response = isRecord(event.response) ? event.response : undefined;
-    const details = isRecord(response?.incomplete_details) ? response.incomplete_details : undefined;
-    const reason = stringValue(details?.reason) ?? "unknown";
-    return {
-      code: "response_incomplete",
-      message: `Incomplete response returned, reason: ${reason}`,
-      status: 502,
-    };
-  }
-  return undefined;
+  return uuidV5(`${PROMPT_CACHE_NAME_PREFIX}${identity}`);
 }
 
 export async function reportResponseStreamError(
@@ -347,6 +369,7 @@ export async function reportResponseStreamError(
   await manager.reportResult(credential.id, {
     ok: false,
     status: error.status,
+    retryAfterSeconds: error.retryAfterSeconds,
     errorType: usageErrorType ?? error.errorType ?? error.code,
     message: error.message,
     rateLimits: rateLimits.length > 0 ? rateLimits : undefined,
@@ -355,25 +378,6 @@ export async function reportResponseStreamError(
 
 function usageLimitErrorType(...values: Array<string | undefined>): string | undefined {
   return values.find((value) => isUsageLimitErrorType(value));
-}
-
-function responseErrorStatus(code: string, errorType: string | undefined): number {
-  if (isUsageLimitErrorType(errorType) || isUsageLimitErrorType(code) || code === "insufficient_quota") {
-    return 429;
-  }
-  if (code === "context_length_exceeded" || code === "invalid_prompt" || code === "cyber_policy") {
-    return 400;
-  }
-  if (code === "server_overloaded") {
-    return 503;
-  }
-  return 502;
-}
-
-function responseMetadataHeaders(response: Response): Headers {
-  const headers = new Headers();
-  copyHeader(response.headers, headers, "x-codex-turn-state");
-  return headers;
 }
 
 async function aggregateResponses(
@@ -448,6 +452,7 @@ async function aggregateResponses(
     return errorResponse(502, "upstream stream ended before response.completed", "bad_upstream_response");
   }
   const responseValue = responseObject(completed);
+  scheduleCredentialSuccessUpdate(env, credential.id, response.status);
   scheduleUsageRecord(env, usageContext, {
     credential,
     response: responseValue,
@@ -457,30 +462,45 @@ async function aggregateResponses(
   return jsonResponse(responseValue, { headers: responseMetadataHeaders(response) });
 }
 
-function streamResponses(
+async function streamResponses(
   response: Response,
   credential: SelectedCredential,
   env: AppEnv,
   usageContext: UsageContext,
-): Response {
+): Promise<Response> {
   const manager = credentialManager(env);
-  const headers = new Headers(response.headers);
-  headers.set("Content-Type", "text/event-stream; charset=utf-8");
-  headers.set("Cache-Control", "no-cache");
-  headers.delete("content-length");
+  const upstreamBody = response.body;
+  if (!upstreamBody) {
+    return emptyUpstreamBodyResponse(manager, credential, env, usageContext);
+  }
+  const headers = sseResponseHeaders(response.headers);
+  const reader = upstreamBody.getReader();
+  let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const push = (value: string | JsonObject): void => {
+        if (!cancelled) {
+          controller.enqueue(encodeSseData(value));
+        }
+      };
+      // The client may cancel while a failure report is awaited; closing a
+      // cancelled stream throws, so only close what is still open.
+      const finish = (): void => {
+        if (!cancelled) {
+          controller.close();
+        }
+      };
       const outputItems: OutputItem[] = [];
       let completedSeen = false;
       let terminalErrorSeen = false;
       try {
-        if (!response.body) {
-          throw new Error("upstream response body is empty");
-        }
-        for await (const event of readSseData(response.body)) {
+        for await (const event of readSseDataFromReader(reader)) {
+          if (cancelled) {
+            break;
+          }
           const parsed = parseSseJson(event.data);
           if (!parsed) {
-            controller.enqueue(encodeSseData(event.data));
+            push(event.data);
             continue;
           }
           collectOutputItem(parsed, outputItems);
@@ -493,49 +513,109 @@ function streamResponses(
               statusCode: streamError.status,
               errorCode: streamError.code,
             });
-            controller.enqueue(encodeSseData(parsed));
+            push(parsed);
             break;
           }
           if (parsed.type === "response.completed") {
             const completed = patchCompletedOutput(parsed, outputItems);
             completedSeen = true;
+            scheduleCredentialSuccessUpdate(env, credential.id, response.status);
             scheduleUsageRecord(env, usageContext, {
               credential,
               response: responseObject(completed),
               statusCode: response.status,
             });
             scheduleCredentialRateLimitUpdate(env, credential);
-            controller.enqueue(encodeSseData(completed));
+            push(completed);
             break;
-          } else {
-            controller.enqueue(encodeSseData(parsed));
           }
-        }
-        if (!completedSeen && !terminalErrorSeen) {
-          scheduleUsageRecord(env, usageContext, {
-            credential,
-            statusCode: 502,
-            errorCode: "bad_upstream_response",
-          });
+          push(parsed);
         }
       } catch (error) {
+        if (cancelled) {
+          recordClientCancelled(env, usageContext, credential);
+          return;
+        }
+        const message = normalizeErrorMessage(error);
+        await manager.reportResult(credential.id, { ok: false, status: 502, message });
+        scheduleUsageRecord(env, usageContext, {
+          credential,
+          statusCode: 502,
+          errorCode: "bad_upstream_response",
+        });
+        push(responsesStreamErrorEvent("bad_upstream_response", message));
+        finish();
+        return;
+      }
+      if (cancelled) {
+        recordClientCancelled(env, usageContext, credential);
+        return;
+      }
+      if (!completedSeen && !terminalErrorSeen) {
+        // Upstream hung up before the terminal event: tell the client instead
+        // of ending the stream as if it had completed.
         await manager.reportResult(credential.id, {
           ok: false,
           status: 502,
-          message: normalizeErrorMessage(error),
+          message: STREAM_TRUNCATED_MESSAGE,
         });
         scheduleUsageRecord(env, usageContext, {
           credential,
           statusCode: 502,
           errorCode: "bad_upstream_response",
         });
-        controller.error(error);
-        return;
+        push(responsesStreamErrorEvent("bad_upstream_response", STREAM_TRUNCATED_MESSAGE));
       }
-      controller.close();
+      finish();
+    },
+    async cancel(reason) {
+      // The client went away: stop pulling from upstream so the connection and
+      // the credential's quota are released; this is not an upstream failure.
+      cancelled = true;
+      await reader.cancel(reason).catch(() => undefined);
     },
   });
   return new Response(body, { status: response.status, headers });
+}
+
+export const STREAM_TRUNCATED_MESSAGE = "upstream stream ended before response.completed";
+const CLIENT_CANCELLED_STATUS = 499;
+
+// Headers for a stream the proxy re-encodes itself: the upstream body was
+// already decoded by fetch, so its transfer and encoding headers no longer apply.
+export function sseResponseHeaders(upstream: Headers): Headers {
+  const headers = normalizedUpstreamHeaders(upstream);
+  headers.set("Content-Type", "text/event-stream; charset=utf-8");
+  headers.set("Cache-Control", "no-cache");
+  return headers;
+}
+
+export function responsesStreamErrorEvent(code: string, message: string): JsonObject {
+  return { type: "error", code, message, param: null };
+}
+
+export function recordClientCancelled(env: AppEnv, usageContext: UsageContext, credential: SelectedCredential): void {
+  scheduleUsageRecord(env, usageContext, {
+    credential,
+    statusCode: CLIENT_CANCELLED_STATUS,
+    errorCode: "client_cancelled",
+  });
+}
+
+export async function emptyUpstreamBodyResponse(
+  manager: CredentialManager,
+  credential: SelectedCredential,
+  env: AppEnv,
+  usageContext: UsageContext,
+): Promise<Response> {
+  const message = "upstream response body is empty";
+  await manager.reportResult(credential.id, { ok: false, status: 502, message });
+  scheduleUsageRecord(env, usageContext, {
+    credential,
+    statusCode: 502,
+    errorCode: "bad_upstream_response",
+  });
+  return errorResponse(502, message, "bad_upstream_response");
 }
 
 export function responseObject(event: JsonObject): JsonValue {
@@ -605,13 +685,6 @@ export function patchCompletedOutput(event: JsonObject, outputItems: OutputItem[
   });
   response.output = sorted.map((entry) => entry.item) as JsonValue;
   return { ...event, response: response as JsonValue };
-}
-
-function copyHeader(from: Headers, to: Headers, name: string): void {
-  const value = from.get(name);
-  if (value) {
-    to.set(name, value);
-  }
 }
 
 function isRotatableStatus(status: number): boolean {
