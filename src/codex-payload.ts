@@ -1,4 +1,9 @@
-import { isResponsesLiteModel, reasoningEffortForRequest, supportedServiceTiers } from "./codex-models.js";
+import {
+  defaultServiceTier,
+  isResponsesLiteModel,
+  reasoningEffortForRequest,
+  supportedServiceTiers,
+} from "./codex-models.js";
 import type { ProxySettings } from "./settings.js";
 import type { JsonObject, JsonValue } from "./types.js";
 import { isRecord, stringValue, uuidV5 } from "./utils.js";
@@ -12,6 +17,12 @@ export interface PayloadIdentity {
   promptCacheKey?: string;
 }
 
+export interface PayloadOptions {
+  // Guardian reviewer requests (x-codex-guardian: reviewer) never carry a
+  // service tier or routing hint in Codex.
+  guardianReviewer?: boolean;
+}
+
 // Responses Lite models (see codex-models.ts) use the upstream "responses lite"
 // protocol: requests carry the x-openai-internal-codex-responses-lite header,
 // parallel_tool_calls false and reasoning.context "all_turns"; tools and
@@ -19,12 +30,15 @@ export interface PayloadIdentity {
 // message instead of the top-level fields.
 const DEFAULT_FUNCTION_NAMESPACE = "functions";
 const SERVICE_TIER_DEFAULT_REQUEST_VALUE = "default";
+const SERVICE_TIER_FLEX = "flex";
+const FAST_MODE_SERVICE_TIER = "priority";
 
 export async function prepareCodexPayload(
   input: JsonObject,
   forceStream: boolean,
   settings: ProxySettings,
   identity: PayloadIdentity = {},
+  options: PayloadOptions = {},
 ): Promise<JsonObject> {
   const payload = structuredClone(input) as JsonObject;
   if (typeof payload.input === "string") {
@@ -46,7 +60,7 @@ export async function prepareCodexPayload(
   delete payload.truncation;
   delete payload.context_management;
   delete payload.user;
-  applyServiceTier(payload, stringValue(input.service_tier), settings);
+  applyServiceTier(payload, stringValue(input.service_tier), settings, options.guardianReviewer === true);
   if (identity.promptCacheKey !== undefined) {
     payload.prompt_cache_key = identity.promptCacheKey;
   }
@@ -64,18 +78,32 @@ export async function prepareCodexPayload(
   return payload;
 }
 
-// A client-supplied tier wins (an explicit "default" opts out of Fast mode); the
-// dashboard Fast mode only fills in when the client is silent. Like Codex, tiers
-// the model catalog does not list for the model are dropped.
-function applyServiceTier(payload: JsonObject, requested: string | undefined, settings: ProxySettings): void {
+// Mirrors codex effective_service_tier: a client-supplied tier wins (an explicit
+// "default" opts out entirely). When the client is silent the dashboard Fast mode
+// asks for "priority"; with Fast mode off the model's own catalog default applies
+// (gpt-6-sol and gpt-6-luna default to Fast). Tiers the catalog does not list for
+// the model are dropped, except "flex", which Codex always forwards as an API
+// request option.
+function applyServiceTier(
+  payload: JsonObject,
+  requested: string | undefined,
+  settings: ProxySettings,
+  guardianReviewer: boolean,
+): void {
   delete payload.service_tier;
-  const tier = requested ?? (settings.fastMode ? "priority" : undefined);
+  if (guardianReviewer) {
+    return;
+  }
+  const model = stringValue(payload.model);
+  const tier = requested ?? (settings.fastMode ? FAST_MODE_SERVICE_TIER : defaultServiceTier(model));
   if (tier === undefined || tier === SERVICE_TIER_DEFAULT_REQUEST_VALUE) {
     return;
   }
-  const supported = supportedServiceTiers(stringValue(payload.model));
-  if (supported !== undefined && !supported.includes(tier)) {
-    return;
+  if (tier !== SERVICE_TIER_FLEX) {
+    const supported = supportedServiceTiers(model);
+    if (supported !== undefined && !supported.includes(tier)) {
+      return;
+    }
   }
   payload.service_tier = tier;
 }

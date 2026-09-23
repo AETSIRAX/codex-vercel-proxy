@@ -80,7 +80,7 @@ curl -i "https://<vercel-domain>/healthz"
 
 ## GET /v1/models
 
-普通请求返回 `MODELS` 环境变量配置的 OpenAI 格式模型列表。未配置时默认返回 `gpt-6-astra,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4`。
+普通请求返回 `MODELS` 环境变量配置的 OpenAI 格式模型列表。未配置时默认返回 `gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4`。
 
 Codex CLI 携带 `client_version` 查询参数时，请求会转发到 Codex 原生 `/models` 端点，响应保持 `{"models":[...]}` 格式，并透传 `If-None-Match`/`ETag` 缓存语义。
 
@@ -231,7 +231,7 @@ data: {"type":"response.completed","response":{...}}
 | `input[].role="system"` | 改为 `developer` |
 | `instructions` 缺失或 `null` | 改为空字符串 |
 | `web_search_preview`、`web_search_preview_2025_03_11` | 改为 `web_search` |
-| `service_tier` | 客户端显式传入时优先（`default` 视为不发送）；未传入时由控制面板 Fast mode 兜底写入 `priority`。最终值按 Codex 模型目录过滤，模型不支持的 tier 会被丢弃 |
+| `service_tier` | 客户端显式传入时优先（`default` 视为不发送）；未传入时由控制面板 Fast mode 兜底写入 `priority`，Fast mode 关闭时取模型目录默认 tier（`gpt-6-sol`、`gpt-6-luna` 为 `priority`）。最终值按 Codex 模型目录过滤，模型不支持的 tier 会被丢弃；`flex` 始终保留；`x-codex-guardian: reviewer` 请求不发送 |
 | Responses Lite 工具与指令 | `input` 中没有 `additional_tools` 项时：`function`、`custom` 工具包进 `functions` namespace，与其他工具一起组成 `additional_tools` 项前置到 `input`，非空 `instructions` 转为 developer 消息；两者带有由 `thread-id` 派生的稳定 id（`at_`、`msg_` 前缀）；顶层 `tools`、`instructions` 不发送 |
 | `stream_options.reasoning_summary_delivery` | 仅保留 Codex 当前支持的 `sequential_cutoff`，删除其他值和额外字段 |
 | 图片 `detail` | Responses Lite 请求会从 message、`function_call_output`、`custom_tool_call_output` 的 `input_image` 中删除 |
@@ -259,11 +259,11 @@ user
 - `session-id` 和 `thread-id`：客户端显式传入时使用请求头值；否则使用 `prompt_cache_key` 或代理按 API KEY 生成的稳定 UUID。
 - `X-Client-Request-Id`：客户端显式传入 `x-client-request-id` 时使用该值；否则使用当前 `thread-id`。
 - `originator`：客户端显式传入时使用该值；否则为 `codex_cli_rs`。
-- `User-Agent`：客户端显式传入时原样转发；否则生成 `codex_cli_rs/<CODEX_CLI_VERSION>`（默认 `0.153.4`）。旧的 `USER_AGENT` 环境变量不再参与请求构造。
+- `User-Agent`：客户端显式传入时原样转发；否则生成 `codex_cli_rs/<CODEX_CLI_VERSION>`（默认 `0.156.0`）。旧的 `USER_AGENT` 环境变量不再参与请求构造。
 - `version`：客户端显式传入时原样转发；否则不发送（当前 Codex CLI 已不再发送该请求头）。
-- `x-codex-routing-hint`：客户端显式传入时透传；否则按 `model=<slug>[;tier=<service_tier>]` 生成。
+- `x-codex-routing-hint`：客户端显式传入时透传；否则按 `model=<slug>[;tier=<service_tier>]` 生成（`x-codex-guardian: reviewer` 请求不生成）。
 - `X-OpenAI-Fedramp: true`：凭证 id_token 标记为 FedRAMP 账号时附加。
-- `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`：存在时透传给上游。
+- `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-codex-guardian`：存在时透传给上游。
 - 请求体 `Content-Encoding`：支持 `zstd`（Codex CLI 默认压缩方式，需要 Node.js 22.15+）、`gzip`、`deflate`、`br`；无法解压时返回 `415 unsupported_content_encoding`，请求体损坏或不是 JSON 对象时返回 `400 invalid_request_body`。
 - 上游响应头 `x-codex-turn-state`、`openai-model`、`x-reasoning-included`、`x-models-etag`、`x-request-id`、`x-codex-promo-message`、`x-codex-active-limit`、`x-codex-rate-limit-reached-type` 会原样返回给客户端。
 多凭据场景下，服务会按 Codex 会话头选择 Codex 凭据。粘连键只来自 `session-id`，没有该头时使用 `thread-id`；没有这两个请求头时保留原有按 `last_used_at` 选择凭据的行为。同一粘连键通常会落到同一凭据，凭据不可用或上游返回可轮换错误时才切换备用凭据。
@@ -478,7 +478,7 @@ curl "https://<vercel-domain>/admin/settings" \
 }
 ```
 
-`fastMode` 默认为 `true`。它只在客户端没有传 `service_tier` 时生效：开启时兜底写入 `service_tier="priority"`，关闭时不发送该字段；客户端显式传入的 `service_tier` 始终优先（`default` 视为不发送）。最终值会按 Codex 模型目录过滤，模型不支持的 tier 不会发送。多凭据部署会按 `session-id`、`thread-id` 做凭据粘连，以减少同一会话被轮转拆分成多套上游缓存键。
+`fastMode` 默认为 `true`。它只在客户端没有传 `service_tier` 时生效：开启时兜底写入 `service_tier="priority"`，关闭时使用模型目录的默认 tier（`gpt-6-sol`、`gpt-6-luna` 为 `priority`，其他模型不发送）；客户端显式传入的 `service_tier` 始终优先（`default` 视为不发送）。最终值会按 Codex 模型目录过滤，模型不支持的 tier 不会发送。多凭据部署会按 `session-id`、`thread-id` 做凭据粘连，以减少同一会话被轮转拆分成多套上游缓存键。
 
 API KEY 和 ADMIN KEY 明文只用于写入，接口响应只返回脱敏后的 `display`。
 
@@ -906,7 +906,7 @@ curl "https://<vercel-domain>/cron/cleanup" \
 
 ```http
 Access-Control-Allow-Origin: *
-Access-Control-Allow-Headers: authorization,content-type,if-none-match,x-api-key,x-client-request-id,x-oai-attestation,x-openai-memgen-request,x-openai-subagent,session-id,thread-id,x-codex-turn-state,x-codex-turn-metadata,x-codex-window-id,x-codex-parent-thread-id,x-codex-installation-id,x-codex-beta-features,x-codex-routing-hint,x-openai-internal-codex-responses-lite,originator,version
+Access-Control-Allow-Headers: authorization,content-type,if-none-match,x-api-key,x-client-request-id,x-oai-attestation,x-openai-memgen-request,x-openai-subagent,session-id,thread-id,x-codex-turn-state,x-codex-turn-metadata,x-codex-window-id,x-codex-parent-thread-id,x-codex-installation-id,x-codex-beta-features,x-codex-routing-hint,x-codex-guardian,x-openai-internal-codex-responses-lite,originator,version
 Access-Control-Expose-Headers: etag,x-codex-turn-state,openai-model,x-reasoning-included,x-models-etag,x-request-id,x-codex-promo-message,x-codex-active-limit,x-codex-rate-limit-reached-type
 Access-Control-Allow-Methods: GET,POST,DELETE,HEAD,OPTIONS
 ```

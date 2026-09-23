@@ -18,6 +18,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 
 test("responses lite models are detected from the codex catalog", () => {
   assert.equal(isResponsesLiteModel("gpt-6-astra"), true);
+  assert.equal(isResponsesLiteModel("gpt-6-sol"), true);
+  assert.equal(isResponsesLiteModel("gpt-6-luna"), true);
   assert.equal(isResponsesLiteModel("gpt-5.6-sol"), true);
   assert.equal(isResponsesLiteModel("gpt-5.6-terra"), true);
   assert.equal(isResponsesLiteModel("gpt-5.6-luna"), true);
@@ -25,7 +27,7 @@ test("responses lite models are detected from the codex catalog", () => {
   assert.equal(isResponsesLiteModel("gpt-daybreak-blue-latest"), true);
   assert.equal(isResponsesLiteModel("codex-auto-review"), true);
   assert.equal(isResponsesLiteModel("gpt-5.5"), false);
-  assert.equal(isResponsesLiteModel("gpt-5.4-mini"), false);
+  assert.equal(isResponsesLiteModel("gpt-5.4"), false);
   assert.equal(isResponsesLiteModel("gpt-5.60"), false);
   assert.equal(isResponsesLiteModel(undefined), false);
 });
@@ -220,7 +222,7 @@ test("encrypted reasoning content is always requested", async () => {
 
 test("service tier prefers the client value and falls back to fast mode", async () => {
   const clientTier = await prepareCodexPayload(
-    { model: "gpt-5.6-sol", input: "hi", service_tier: "ultrafast" },
+    { model: "gpt-5.6-sol", input: "hi", service_tier: "priority" },
     true,
     settings,
   );
@@ -232,7 +234,7 @@ test("service tier prefers the client value and falls back to fast mode", async 
   const fastFallback = await prepareCodexPayload({ model: "gpt-5.6-sol", input: "hi" }, true, fastSettings);
   const silent = await prepareCodexPayload({ model: "gpt-5.6-sol", input: "hi" }, true, settings);
 
-  assert.equal(clientTier.service_tier, "ultrafast");
+  assert.equal(clientTier.service_tier, "priority");
   // An explicit "default" opts out of the dashboard Fast mode, like codex drops it.
   assert.equal("service_tier" in clientDefault, false);
   assert.equal(fastFallback.service_tier, "priority");
@@ -245,7 +247,16 @@ test("service tier is dropped when the codex catalog does not list it for the mo
     true,
     settings,
   );
-  const noTiers = await prepareCodexPayload({ model: "gpt-5.4-mini", input: "hi" }, true, fastSettings);
+  const withdrawnTier = await prepareCodexPayload(
+    { model: "gpt-5.6-sol", input: "hi", service_tier: "ultrafast" },
+    true,
+    settings,
+  );
+  const noTiers = await prepareCodexPayload(
+    { model: "gpt-daybreak-blue-latest", input: "hi" },
+    true,
+    fastSettings,
+  );
   const unknownModel = await prepareCodexPayload(
     { model: "gpt-9-unknown", input: "hi", service_tier: "ultrafast" },
     true,
@@ -253,9 +264,55 @@ test("service tier is dropped when the codex catalog does not list it for the mo
   );
 
   assert.equal("service_tier" in unsupportedTier, false);
+  assert.equal("service_tier" in withdrawnTier, false);
   assert.equal("service_tier" in noTiers, false);
   // Models outside the catalog cannot be validated, so the client value passes.
   assert.equal(unknownModel.service_tier, "ultrafast");
+});
+
+test("gpt-6-sol and gpt-6-luna fall back to their catalog default tier", async () => {
+  const sol = await prepareCodexPayload({ model: "gpt-6-sol", input: "hi" }, true, settings);
+  const luna = await prepareCodexPayload({ model: "gpt-6-luna", input: "hi" }, true, settings);
+  const astra = await prepareCodexPayload({ model: "gpt-6-astra", input: "hi" }, true, settings);
+  const optOut = await prepareCodexPayload(
+    { model: "gpt-6-sol", input: "hi", service_tier: "default" },
+    true,
+    fastSettings,
+  );
+
+  assert.equal(sol.service_tier, "priority");
+  assert.equal(luna.service_tier, "priority");
+  // gpt-6-astra has no catalog default, so Fast stays opt-in there.
+  assert.equal("service_tier" in astra, false);
+  assert.equal("service_tier" in optOut, false);
+});
+
+test("flex is forwarded even when the catalog does not list it", async () => {
+  const known = await prepareCodexPayload(
+    { model: "gpt-5.5", input: "hi", service_tier: "flex" },
+    true,
+    settings,
+  );
+  const noTiers = await prepareCodexPayload(
+    { model: "gpt-daybreak-red-latest", input: "hi", service_tier: "flex" },
+    true,
+    fastSettings,
+  );
+
+  assert.equal(known.service_tier, "flex");
+  assert.equal(noTiers.service_tier, "flex");
+});
+
+test("guardian reviewer requests never carry a service tier", async () => {
+  const reviewer = await prepareCodexPayload(
+    { model: "gpt-6-sol", input: "hi", service_tier: "priority" },
+    true,
+    fastSettings,
+    {},
+    { guardianReviewer: true },
+  );
+
+  assert.equal("service_tier" in reviewer, false);
 });
 
 test("prompt cache key from the request identity is applied", async () => {

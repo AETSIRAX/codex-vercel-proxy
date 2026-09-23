@@ -59,8 +59,8 @@ vercel.json                  Vercel Functions、Cron、rewrite 配置
 | `ADMIN_TOKEN` | 首次初始化 | `/admin/*` 管理接口访问密钥，后续可在控制面板更新 |
 | `CRON_SECRET` | 是 | `/cron/refresh` 和 `/cron/cleanup` 定时任务密钥 |
 | `CRED_ENCRYPTION_KEY` | 是 | 凭证加密密钥，建议使用长随机字符串 |
-| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6-astra,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4` |
-| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 CLI 版本，默认 `0.153.4` |
+| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4` |
+| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 CLI 版本，默认 `0.156.0` |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
 | `REFRESH_MIN_INTERVAL_SECONDS` | 否 | 强制刷新最小间隔，默认 `300` |
@@ -75,8 +75,8 @@ PROXY_API_KEY=replace-with-local-proxy-key
 ADMIN_TOKEN=replace-with-local-admin-token
 CRON_SECRET=replace-with-local-cron-secret
 CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
-MODELS=gpt-6-astra,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4
-CODEX_CLI_VERSION=0.153.4
+MODELS=gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4
+CODEX_CLI_VERSION=0.156.0
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
 REFRESH_LEAD_SECONDS=172800
 REFRESH_MIN_INTERVAL_SECONDS=300
@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS proxy_settings (
 );
 ```
 
-`fast_mode` 默认为开启。它只是客户端未传 `service_tier` 时的兜底：开启时写入 `service_tier="priority"`，关闭时不发送；客户端显式传入的 `service_tier` 始终优先（`default` 视为不发送）。最终值按 `src/codex-models.ts` 的模型目录过滤。
+`fast_mode` 默认为开启。它只是客户端未传 `service_tier` 时的兜底：开启时写入 `service_tier="priority"`，关闭时使用模型目录的 `defaultServiceTier`（`gpt-6-sol`、`gpt-6-luna` 为 `priority`，其他模型不发送）；客户端显式传入的 `service_tier` 始终优先（`default` 视为不发送）。最终值按 `src/codex-models.ts` 的模型目录过滤。
 
 API KEY 和 ADMIN KEY 明文不写入数据库，只保存 SHA-256 和脱敏展示值。每条 API KEY 会返回稳定 `id`，控制面板用它保留、替换或删除单条 key；新增和替换时才提交明文。访问方维度会用当前控制面板 API KEY 配置返回 `KEY 1 · <脱敏值>` 这样的 `clientKey` 展示名，控制面板据此显示每个代理 key 的 token 用量。
 
@@ -258,7 +258,7 @@ Responses 入口会在转发前执行以下处理：
 - 删除 `previous_response_id`、`prompt_cache_retention`、`safety_identifier`
 - 删除 `max_output_tokens`、`max_completion_tokens`、`max_tokens`、`temperature`、`top_p`
 - 删除 `truncation`、`context_management`、`user`
-- `service_tier` 客户端优先、面板兜底：客户端显式传入时使用客户端值（`default` 视为不发送），未传时 Fast mode 开启则写入 `priority`；最终值按模型目录过滤，模型不支持的 tier 丢弃，目录之外的模型不过滤
+- `service_tier` 客户端优先、面板兜底、模型默认：客户端显式传入时使用客户端值（`default` 视为不发送），未传时 Fast mode 开启则写入 `priority`，关闭则取模型目录默认 tier（`gpt-6-sol`、`gpt-6-luna` 为 `priority`）；最终值按模型目录过滤，模型不支持的 tier 丢弃，目录之外的模型不过滤；`flex` 始终保留；`x-codex-guardian: reviewer` 请求不发送 `service_tier`
 - `input[].role="system"` 改为 `developer`
 - `web_search_preview` 和 `web_search_preview_2025_03_11` 改为 `web_search`
 - `instructions` 缺失或为 `null` 时改为空字符串
@@ -276,9 +276,9 @@ Responses 入口会在转发前执行以下处理：
 - `originator` 显式传入时透传；否则使用 `codex_cli_rs`
 - `User-Agent` 显式传入时透传；否则生成 `codex_cli_rs/<有效版本>`；旧的 `USER_AGENT` 环境变量不再参与请求构造
 - `version` 显式传入时透传；否则不发送（Codex CLI 0.153 已不再发送该头），`CODEX_CLI_VERSION` 只用于生成 `User-Agent`
-- `x-codex-routing-hint` 显式传入时透传；否则按 `model=<slug>[;tier=<service_tier>]` 生成
+- `x-codex-routing-hint` 显式传入时透传；否则按 `model=<slug>[;tier=<service_tier>]` 生成（Guardian reviewer 请求不生成）
 - 凭证 id_token 标记 `chatgpt_account_is_fedramp` 时附加 `X-OpenAI-Fedramp: true`
-- `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-openai-internal-codex-responses-lite` 存在时透传；Responses Lite 模型固定携带 `x-openai-internal-codex-responses-lite: true`
+- `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-codex-guardian`、`x-openai-internal-codex-responses-lite` 存在时透传；Responses Lite 模型固定携带 `x-openai-internal-codex-responses-lite: true`
 - 请求体 `Content-Encoding: zstd`（Codex CLI 默认）、`gzip`、`deflate`、`br` 由 `readJsonObject()` 用 Node 内置 `zlib` 解压；运行时缺少 zstd（Node < 22.15）时返回 `415 unsupported_content_encoding`
 - 上游响应头 `x-codex-turn-state`、`openai-model`、`x-reasoning-included`、`x-models-etag`、`x-request-id`、`x-codex-promo-message`、`x-codex-active-limit`、`x-codex-rate-limit-reached-type` 原样返回；上游 `response.failed` 事件按 `src/codex-errors.ts` 映射为 `400`/`429`/`503`/`502`，`rate_limit_exceeded` 会从消息解析 `Retry-After`
 
@@ -294,7 +294,7 @@ Chat Completions 入口会先转成 Responses：
 - `assistant.tool_calls` 转成顶层 `function_call`
 - function tools 从 Chat Completions 嵌套格式展平成 Responses 格式
 - function 名称超过 64 个字符时会截断；`mcp__...__tool` 会优先保留最后的 tool 名称
-- 传入 `reasoning` 时原样转发；仅传入 `reasoning_effort` 时转成 `reasoning.effort` 并补 `reasoning.summary="auto"`（GPT-5.6 系列不补 `summary`，上游默认无 reasoning summary）
+- 传入 `reasoning` 时原样转发；仅传入 `reasoning_effort` 时转成 `reasoning.effort` 并补 `reasoning.summary="auto"`（GPT-6、GPT-5.6 等 Responses Lite 模型不补 `summary`，上游默认无 reasoning summary）
 - 未传入 `model` 时使用 `MODELS` 中的第一项
 - 显式传入的 `prompt_cache_key` 会保留到 Responses 请求体
 

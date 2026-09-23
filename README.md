@@ -18,7 +18,7 @@ Codex Vercel Proxy 是一个部署在 Vercel Functions 上的 Codex 代理服务
 
 - OpenAI 兼容接口：`/v1/models`、`/v1/responses`、`/v1/chat/completions`
 - Codex 后端接口：`/v1/alpha/search`、`/v1/responses/compact`、`/v1/images/generations`、`/v1/images/edits`、`/v1/memories/trace_summarize`
-- Responses Lite 模型：内置 `gpt-6-astra` 和 GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`），按 Codex 模型目录自动以 Responses Lite 协议适配上游请求，工具、指令和稳定 id 的组装方式与 Codex CLI 一致；思考等级 `ultra`、`persistent` 按 Codex 的逐模型规则映射
+- Responses Lite 模型：内置 GPT-6 系列（`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`）和 GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`），按 Codex 模型目录自动以 Responses Lite 协议适配上游请求，工具、指令和稳定 id 的组装方式与 Codex CLI 一致；思考等级 `ultra`、`persistent` 按 Codex 的逐模型规则映射
 - 请求体压缩：兼容 Codex CLI 默认开启的 zstd 请求体压缩（同时支持 gzip、deflate、br），运行时不支持时返回 `415` 并提示关闭 `enable_request_compression`
 - OAuth 登录：控制面板内置 Codex OAuth 登录（PKCE），浏览器登录 OpenAI 账号后粘贴回调地址即可自动获取并导入凭证，无需手动准备 token JSON
 - 凭证池管理：支持多条 Codex 凭证导入、状态查看、启用、禁用、刷新和删除
@@ -28,7 +28,7 @@ Codex Vercel Proxy 是一个部署在 Vercel Functions 上的 Codex 代理服务
 - 缓存路由：保留 `prompt_cache_key`，缺省时自动为 Codex 请求生成稳定缓存键
 - 用量统计：记录请求耗时、模型、凭证、缓存 token、思考 token 和汇总数据
 - 用量分析：控制面板支持按 24 小时、7 天、30 天查看 Token 分类堆叠与请求数走势、模型/凭据/访问 KEY 聚合排行，请求明细可按「仅错误」「慢请求」筛选
-- 请求配置：控制面板可切换 Fast mode（客户端未指定 `service_tier` 时的兜底 `priority`），并按行新增、替换、删除代理 API KEY 和 ADMIN KEY
+- 请求配置：控制面板可切换 Fast mode（客户端未指定 `service_tier` 时的兜底 `priority`；关闭时按模型默认，`gpt-6-sol`、`gpt-6-luna` 默认仍为 Fast），并按行新增、替换、删除代理 API KEY 和 ADMIN KEY
 - 加密存储：凭证私密字段使用 `CRED_ENCRYPTION_KEY` 加密后写入 Postgres
 - 控制面板：访问 `/` 或 `/dashboard`，首屏输入服务地址和当前 ADMIN KEY 后管理凭证；连接后可在右上角连接胶囊中重新连接或清除，支持浅色/深色主题与键盘快捷键（`1`–`4` 切换页面，`/` 聚焦凭据搜索）
 - 健康检查：公开 `/healthz` 端点，检查关键环境变量、数据库连通性和已配置密钥
@@ -93,8 +93,8 @@ Codex upstream / Postgres
 | `ADMIN_TOKEN` | 首次初始化 | `/admin/*` 和控制面板访问密钥，后续可在控制面板更新 |
 | `CRON_SECRET` | 是 | `/cron/refresh` 和 `/cron/cleanup` 定时任务接口密钥 |
 | `CRED_ENCRYPTION_KEY` | 是 | 凭证加密密钥，建议使用长随机字符串 |
-| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6-astra,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4` |
-| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 Codex CLI 版本，默认 `0.153.4` |
+| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4` |
+| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 Codex CLI 版本，默认 `0.156.0`（`gpt-6-sol`、`gpt-6-luna` 要求 0.155.0 及以上） |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
 | `REFRESH_MIN_INTERVAL_SECONDS` | 否 | 强制刷新最小间隔，默认 `300` |
@@ -153,8 +153,8 @@ PROXY_API_KEY=replace-with-local-proxy-key
 ADMIN_TOKEN=replace-with-local-admin-token
 CRON_SECRET=replace-with-local-cron-secret
 CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
-MODELS=gpt-6-astra,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4
-CODEX_CLI_VERSION=0.153.4
+MODELS=gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4
+CODEX_CLI_VERSION=0.156.0
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
 REFRESH_LEAD_SECONDS=172800
 REFRESH_MIN_INTERVAL_SECONDS=300
@@ -318,22 +318,22 @@ OpenAI 的 `refresh_token` 是一次性 token。刷新成功后，服务会把�
 
 ## Responses Lite 模型与思考等级
 
-代理内置一份 Codex 模型目录快照（`src/codex-models.ts`，来源于 Codex CLI 0.153.4 的 `models.json`），用于判断哪些模型走 Responses Lite 协议、各模型支持的思考等级和 service tier。`gpt-6-astra`、GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`）、`gpt-daybreak-*` 和 `codex-auto-review` 在上游使用 Responses Lite 协议；目录之外的模型按 `gpt-6`、`gpt-5.6`、`gpt-daybreak`、`codex-auto-review` 前缀判断。代理会对这些模型自动完成适配：
+代理内置一份 Codex 模型目录快照（`src/codex-models.ts`，来源于 openai/codex main 分支 2026-09-23 的 `models.json`），用于判断哪些模型走 Responses Lite 协议、各模型支持的思考等级、service tier 和默认 service tier。GPT-6 系列（`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`）、GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`）、`gpt-daybreak-*` 和 `codex-auto-review` 在上游使用 Responses Lite 协议；目录之外的模型按 `gpt-6`、`gpt-5.6`、`gpt-daybreak`、`codex-auto-review` 前缀判断。代理会对这些模型自动完成适配：
 
 - 上游请求附带 `x-openai-internal-codex-responses-lite: true` 请求头，`parallel_tool_calls` 固定为 `false`，`reasoning.context` 缺省时补为 `all_turns`；
 - Lite 请求会清除 message、`function_call_output` 和 `custom_tool_call_output` 图片内容中的 `detail` 字段；
 - 工具和指令的组装方式与 Codex CLI 完全一致：`function`、`custom` 工具会被包进 `{"type":"namespace","name":"functions","tools":[...]}`（放在第一个函数工具原来的位置），`web_search`、`tool_search` 等其他工具保持原顺序，整个工具列表作为一个 `additional_tools` 项（没有工具时为空列表）前置到 `input`，顶层 `tools` 和 `instructions` 不再发送；非空 `instructions` 转换为紧随其后的 developer 消息。这两个前缀项带有稳定 id（`at_<uuidv5>`、`msg_<uuidv5>`，命名空间由当前 `thread-id` 派生，与 Codex 相同），同一线程内内容不变时 id 不变，便于上游缓存前缀；
 - 如果客户端（如 Codex CLI 0.144+）已经发送 `additional_tools` 项，输入保持原样；
 - 托管工具（如 `web_search`）会随其他工具一起进入 `additional_tools`。Codex CLI 自身不会给 lite 模型发送托管搜索（其搜索由 CLI 本地 `web.run` 工具执行），lite 上游是否接受由上游决定；需要服务端 `web_search` 请使用 `gpt-5.5` 及更早模型；
-- 思考等级按模型目录映射：`ultra` 是 Codex 客户端本地概念，发送上游时取该模型的 `multi_agent_reasoning_effort`（如 `gpt-6-astra` 为 `xhigh`），没有则取 `max`，仍不支持时取该模型最高的非 ultra 等级（如 `gpt-5.5` 为 `xhigh`）；`persistent` 映射为 `disabled`；
+- 思考等级按模型目录映射：`ultra` 是 Codex 客户端本地概念，发送上游时取该模型的 `multi_agent_reasoning_effort`（如 `gpt-6-astra` 为 `xhigh`），没有则取 `max`（如 `gpt-6-sol`、`gpt-6-luna`），仍不支持时取该模型最高的非 ultra 等级（如 `gpt-5.5` 为 `xhigh`）；`persistent` 映射为 `disabled`；
 - 无论请求是否带 `reasoning`，都会追加 `include: ["reasoning.encrypted_content"]`，与 Codex CLI 一致；
-- Codex App/CLI 传入的 `User-Agent` 和 `version` 会原样转发。普通客户端缺少 `User-Agent` 时，代理用 `CODEX_CLI_VERSION`（默认 `0.153.4`）生成 `codex_cli_rs/<版本>`；当前 Codex CLI 已不再发送 `version` 请求头，代理也不会伪造它。旧的 `USER_AGENT` 环境变量不再参与请求构造。
+- Codex App/CLI 传入的 `User-Agent` 和 `version` 会原样转发。普通客户端缺少 `User-Agent` 时，代理用 `CODEX_CLI_VERSION`（默认 `0.156.0`）生成 `codex_cli_rs/<版本>`；当前 Codex CLI 已不再发送 `version` 请求头，代理也不会伪造它。旧的 `USER_AGENT` 环境变量不再参与请求构造。
 
 `gpt-5.5` 及更早模型不受 lite 适配影响，仍按原有方式转发。
 
 ### service_tier
 
-`service_tier` 采用客户端优先、面板兜底的策略：客户端显式传入时使用客户端值（`default` 视为不发送，也会关闭 Fast mode 兜底）；客户端未传时，控制面板开启 Fast mode 则写入 `priority`。最终值会按模型目录过滤，模型不支持的 tier（例如 `gpt-5.4-mini` 不支持 `priority`、只有 `gpt-5.6-sol` 支持 `ultrafast`）会被丢弃，目录之外的模型不做过滤。上游请求头 `x-codex-routing-hint` 会按 `model=<slug>[;tier=<tier>]` 生成（客户端已传时透传）。
+`service_tier` 采用客户端优先、面板兜底、模型默认的策略：客户端显式传入时使用客户端值（`default` 视为不发送，也会关闭所有兜底）；客户端未传时，控制面板开启 Fast mode 则写入 `priority`，关闭时使用模型目录中的默认 tier（`gpt-6-sol`、`gpt-6-luna` 默认 `priority`，与 Codex 一致；其他模型不发送）。最终值会按模型目录过滤，模型不支持的 tier（例如 `gpt-daybreak-*` 不支持 `priority`，`gpt-5.6-sol` 已不再提供 `ultrafast`）会被丢弃，目录之外的模型不做过滤；`flex` 是 API 请求选项，与 Codex 一样始终原样发送。Guardian 审查请求（`x-codex-guardian: reviewer`）与 Codex 一致，不发送 `service_tier`，也不生成 `x-codex-routing-hint`。上游请求头 `x-codex-routing-hint` 会按 `model=<slug>[;tier=<tier>]` 生成（客户端已传时透传）。
 
 ### 请求体压缩
 
@@ -343,7 +343,7 @@ Codex CLI 默认开启 `enable_request_compression`，用 zstd 压缩 `/v1/respo
 
 服务会保留客户端显式传入的 `prompt_cache_key`。如果请求没有传入该字段，会按调用方的代理密钥生成稳定 UUID，并把同一个值同时作为请求体 `prompt_cache_key` 以及默认上游 `session-id`、`thread-id` 发送。
 
-客户端显式传入 `session-id` 或 `thread-id` 请求头时，这两个请求头会用于上游请求；`prompt_cache_key` 仍按请求体字段或代理自动生成值处理。服务还会透传 `version`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features` 和 `x-codex-routing-hint`，`x-client-request-id` 缺省时使用当前 `thread-id`；FedRAMP 账号（id_token 中 `chatgpt_account_is_fedramp` 为真）会附加 `X-OpenAI-Fedramp: true`。上游响应中的 `x-codex-turn-state`、`openai-model`、`x-reasoning-included`、`x-models-etag`、`x-request-id`、`x-codex-promo-message`、`x-codex-active-limit`、`x-codex-rate-limit-reached-type` 会原样返回给客户端。
+客户端显式传入 `session-id` 或 `thread-id` 请求头时，这两个请求头会用于上游请求；`prompt_cache_key` 仍按请求体字段或代理自动生成值处理。服务还会透传 `version`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-codex-routing-hint` 和 `x-codex-guardian`，`x-client-request-id` 缺省时使用当前 `thread-id`；FedRAMP 账号（id_token 中 `chatgpt_account_is_fedramp` 为真）会附加 `X-OpenAI-Fedramp: true`。上游响应中的 `x-codex-turn-state`、`openai-model`、`x-reasoning-included`、`x-models-etag`、`x-request-id`、`x-codex-promo-message`、`x-codex-active-limit`、`x-codex-rate-limit-reached-type` 会原样返回给客户端。
 
 多凭据场景下，服务会按 Codex 会话头做凭据粘连。粘连键只来自 `session-id`，没有该头时使用 `thread-id`；没有这两个请求头时保留原有按 `last_used_at` 选择凭据的行为。该凭据不可用或触发可轮换错误时，当前请求才会切到备用凭据。
 

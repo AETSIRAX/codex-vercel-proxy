@@ -18,7 +18,17 @@ const INVALID_REQUEST_ERROR_CODES = new Set([
   "cyber_policy",
   "misalignment_policy_violation",
 ]);
-const SERVER_OVERLOADED_ERROR_CODES = new Set(["server_is_overloaded", "slow_down", "server_overloaded"]);
+// Quota exhaustion codex maps to QuotaExceeded (api_bridge.rs, sse/responses.rs).
+const QUOTA_EXCEEDED_ERROR_CODES = new Set([
+  "insufficient_quota",
+  "credit_balance_exhausted",
+  "organization_spend_limit_exceeded",
+  "project_spend_limit_exceeded",
+  "organization_usage_limit_exceeded",
+]);
+// slow_down is a retryable rate limit, not an overload (openai/codex#45602).
+const RATE_LIMIT_ERROR_CODES = new Set(["rate_limit_exceeded", "slow_down"]);
+const SERVER_OVERLOADED_ERROR_CODES = new Set(["server_is_overloaded", "server_overloaded"]);
 const RATE_LIMIT_RETRY_AFTER_PATTERN = /try again in\s*(\d+(?:\.\d+)?)\s*(s|ms|seconds?)/i;
 // Response headers Codex reads off the /responses reply; surfaced on aggregated
 // (non-stream) replies since stream replies already carry the upstream headers.
@@ -45,7 +55,7 @@ export function responseStreamError(event: JsonObject): ResponseStreamError | un
       errorType,
       message,
       status: responseErrorStatus(code, errorType),
-      retryAfterSeconds: code === "rate_limit_exceeded" ? parseRetryAfterFromMessage(message) : undefined,
+      retryAfterSeconds: RATE_LIMIT_ERROR_CODES.has(code) ? parseRetryAfterFromMessage(message) : undefined,
     };
   }
   if (event.type === "response.incomplete") {
@@ -65,8 +75,9 @@ export function responseErrorStatus(code: string, errorType: string | undefined)
   if (
     isUsageLimitErrorType(errorType) ||
     isUsageLimitErrorType(code) ||
-    code === "insufficient_quota" ||
-    code === "rate_limit_exceeded"
+    errorType === "insufficient_quota" ||
+    QUOTA_EXCEEDED_ERROR_CODES.has(code) ||
+    RATE_LIMIT_ERROR_CODES.has(code)
   ) {
     return 429;
   }
@@ -80,7 +91,7 @@ export function responseErrorStatus(code: string, errorType: string | undefined)
 }
 
 // codex-api parses "try again in 1.5s" / "try again in 250ms" out of
-// rate_limit_exceeded messages to schedule the retry.
+// rate_limit_exceeded and slow_down messages to schedule the retry.
 export function parseRetryAfterFromMessage(message: string): number | undefined {
   const match = RATE_LIMIT_RETRY_AFTER_PATTERN.exec(message);
   if (!match) {

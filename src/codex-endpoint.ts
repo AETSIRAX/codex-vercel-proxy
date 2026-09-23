@@ -17,6 +17,12 @@ const CODEX_JSON_POST_ROUTES = new Map<string, CodexJsonEndpointPath>([
   ["/v1/responses/compact", "responses/compact"],
 ]);
 
+// Codex marks Guardian review and classification calls on /responses with
+// x-codex-guardian; reviewer calls go out without a service tier or routing hint.
+export function isGuardianReviewerRequest(request: Request): boolean {
+  return request.headers.get("x-codex-guardian")?.trim() === "reviewer";
+}
+
 export function resolveCodexJsonPostEndpoint(pathname: string, method: string): CodexJsonEndpointPath | undefined {
   return method === "POST" ? CODEX_JSON_POST_ROUTES.get(pathname) : undefined;
 }
@@ -67,6 +73,7 @@ export function buildCodexRequestHeaders(
   copyHeader(request.headers, headers, "X-Codex-Installation-Id");
   copyHeader(request.headers, headers, "X-Codex-Beta-Features");
   copyHeader(request.headers, headers, "X-Codex-Routing-Hint");
+  copyHeader(request.headers, headers, "X-Codex-Guardian");
   copyHeader(request.headers, headers, "X-Client-Request-Id");
   copyHeader(request.headers, headers, "originator");
   copyHeader(request.headers, headers, "session-id");

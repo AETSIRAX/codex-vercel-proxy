@@ -9,6 +9,7 @@ import {
   buildCodexEndpointUrl,
   buildCodexRequestHeaders,
   buildCodexRoutingHint,
+  isGuardianReviewerRequest,
   type CodexJsonEndpointPath,
 } from "./codex-endpoint.js";
 import { codexBaseURL } from "./env.js";
@@ -67,7 +68,9 @@ export async function proxyResponses(request: Request, env: AppEnv, input: JsonO
   const wantsStream = input.stream === true;
   const settings = await settingsStore(env).getSettings();
   const identity = await resolveRequestIdentity(request, input);
-  const payload = await prepareCodexPayload(input, true, settings, identity);
+  const payload = await prepareCodexPayload(input, true, settings, identity, {
+    guardianReviewer: isGuardianReviewerRequest(request),
+  });
   const usageContext = createUsageContext(request, {
     endpoint: "/v1/responses",
     model: stringValue(payload.model),
@@ -238,7 +241,9 @@ async function fetchCodexOnce(
   if (isResponsesLiteModel(stringValue(payload.model))) {
     headers.set("X-OpenAI-Internal-Codex-Responses-Lite", "true");
   }
-  applyRoutingHint(headers, payload);
+  if (!isGuardianReviewerRequest(request)) {
+    applyRoutingHint(headers, payload);
+  }
   headers.set("X-Client-Request-Id", request.headers.get("x-client-request-id")?.trim() || identity.threadId);
   headers.set("originator", request.headers.get("originator")?.trim() || "codex_cli_rs");
   headers.set("session-id", identity.sessionId);

@@ -9,9 +9,12 @@ export interface CodexModelInfo {
   // defines one (codex-rs: ModelInfo.multi_agent_reasoning_effort).
   multiAgentReasoningEffort?: string;
   serviceTiers: readonly string[];
+  // Tier Codex requests when the user has not chosen one
+  // (codex-rs: ModelPreset.default_service_tier).
+  defaultServiceTier?: string;
 }
 
-// Snapshot of codex-rs/models-manager/models.json (openai/codex main, 2026-09-05).
+// Snapshot of codex-rs/models-manager/models.json (openai/codex main, 2026-09-23).
 // Only the fields the proxy needs for request shaping are kept here; the order
 // follows the catalog priority so the first entry is Codex's default model.
 const EFFORTS_UP_TO_ULTRA = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
@@ -28,11 +31,27 @@ export const CODEX_MODEL_CATALOG: readonly CodexModelInfo[] = [
     serviceTiers: ["priority"],
   },
   {
+    slug: "gpt-6-sol",
+    useResponsesLite: true,
+    supportedReasoningEfforts: EFFORTS_UP_TO_ULTRA,
+    defaultReasoningEffort: "medium",
+    serviceTiers: ["priority"],
+    defaultServiceTier: "priority",
+  },
+  {
+    slug: "gpt-6-luna",
+    useResponsesLite: true,
+    supportedReasoningEfforts: EFFORTS_UP_TO_MAX,
+    defaultReasoningEffort: "medium",
+    serviceTiers: ["priority"],
+    defaultServiceTier: "priority",
+  },
+  {
     slug: "gpt-5.6-sol",
     useResponsesLite: true,
     supportedReasoningEfforts: EFFORTS_UP_TO_ULTRA,
     defaultReasoningEffort: "low",
-    serviceTiers: ["priority", "ultrafast"],
+    serviceTiers: ["priority"],
   },
   {
     slug: "gpt-5.6-terra",
@@ -75,20 +94,6 @@ export const CODEX_MODEL_CATALOG: readonly CodexModelInfo[] = [
     supportedReasoningEfforts: EFFORTS_UP_TO_XHIGH,
     defaultReasoningEffort: "medium",
     serviceTiers: ["priority"],
-  },
-  {
-    slug: "gpt-5.4-mini",
-    useResponsesLite: false,
-    supportedReasoningEfforts: EFFORTS_UP_TO_XHIGH,
-    defaultReasoningEffort: "medium",
-    serviceTiers: [],
-  },
-  {
-    slug: "gpt-5.2",
-    useResponsesLite: false,
-    supportedReasoningEfforts: EFFORTS_UP_TO_XHIGH,
-    defaultReasoningEffort: "medium",
-    serviceTiers: [],
   },
   {
     slug: "codex-auto-review",
@@ -150,4 +155,8 @@ export function reasoningEffortForRequest(model: string | undefined, effort: str
 
 export function supportedServiceTiers(model: string | undefined): readonly string[] | undefined {
   return lookupCodexModel(model)?.serviceTiers;
+}
+
+export function defaultServiceTier(model: string | undefined): string | undefined {
+  return lookupCodexModel(model)?.defaultServiceTier;
 }

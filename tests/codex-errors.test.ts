@@ -11,7 +11,13 @@ import {
 test("response.failed codes map to the statuses codex uses", () => {
   assert.equal(responseErrorStatus("usage_limit_reached", undefined), 429);
   assert.equal(responseErrorStatus("insufficient_quota", undefined), 429);
+  assert.equal(responseErrorStatus("other", "insufficient_quota"), 429);
+  assert.equal(responseErrorStatus("credit_balance_exhausted", undefined), 429);
+  assert.equal(responseErrorStatus("organization_spend_limit_exceeded", undefined), 429);
+  assert.equal(responseErrorStatus("project_spend_limit_exceeded", undefined), 429);
+  assert.equal(responseErrorStatus("organization_usage_limit_exceeded", undefined), 429);
   assert.equal(responseErrorStatus("rate_limit_exceeded", undefined), 429);
+  assert.equal(responseErrorStatus("slow_down", undefined), 429);
   assert.equal(responseErrorStatus("other", "usage_not_included"), 429);
   assert.equal(responseErrorStatus("context_length_exceeded", undefined), 400);
   assert.equal(responseErrorStatus("invalid_prompt", undefined), 400);
@@ -19,7 +25,6 @@ test("response.failed codes map to the statuses codex uses", () => {
   assert.equal(responseErrorStatus("cyber_policy", undefined), 400);
   assert.equal(responseErrorStatus("misalignment_policy_violation", undefined), 400);
   assert.equal(responseErrorStatus("server_is_overloaded", undefined), 503);
-  assert.equal(responseErrorStatus("slow_down", undefined), 503);
   assert.equal(responseErrorStatus("server_overloaded", undefined), 503);
   assert.equal(responseErrorStatus("something_else", undefined), 502);
 });
@@ -40,6 +45,13 @@ test("response.failed stream errors carry the parsed retry delay", () => {
   });
   assert.equal(error?.status, 429);
   assert.equal(error?.retryAfterSeconds, 3);
+
+  const slowDown = responseStreamError({
+    type: "response.failed",
+    response: { error: { code: "slow_down", message: "Slow down. Try again in 2s." } },
+  });
+  assert.equal(slowDown?.status, 429);
+  assert.equal(slowDown?.retryAfterSeconds, 2);
 
   const overloaded = responseStreamError({
     type: "response.failed",

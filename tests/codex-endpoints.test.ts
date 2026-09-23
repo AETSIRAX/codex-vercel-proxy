@@ -5,6 +5,7 @@ import {
   buildCodexEndpointUrl,
   buildCodexRequestHeaders,
   buildCodexRoutingHint,
+  isGuardianReviewerRequest,
   resolveCodexJsonPostEndpoint,
 } from "../src/codex-endpoint.js";
 
@@ -35,6 +36,7 @@ test("codex endpoint headers forward client identity, attestation and conditiona
       "x-openai-subagent": "memory_consolidation",
       "x-codex-installation-id": "installation-value",
       "x-codex-routing-hint": "model=gpt-6-astra;tier=priority",
+      "x-codex-guardian": "classifier",
       "user-agent": "codex_work_desktop/0.153.4",
       version: "0.153.4",
     },
@@ -60,6 +62,7 @@ test("codex endpoint headers forward client identity, attestation and conditiona
   assert.equal(headers.get("x-openai-subagent"), "memory_consolidation");
   assert.equal(headers.get("x-codex-installation-id"), "installation-value");
   assert.equal(headers.get("x-codex-routing-hint"), "model=gpt-6-astra;tier=priority");
+  assert.equal(headers.get("x-codex-guardian"), "classifier");
   assert.equal(headers.get("user-agent"), "codex_work_desktop/0.153.4");
   assert.equal(headers.get("version"), "0.153.4");
   assert.equal(headers.has("content-type"), false);
@@ -95,8 +98,18 @@ test("codex JSON endpoint headers apply the verified default client identity", (
 
   // Current Codex clients identify themselves through User-Agent only.
   assert.equal(headers.has("version"), false);
-  assert.equal(headers.get("user-agent"), "codex_cli_rs/0.153.4");
+  assert.equal(headers.get("user-agent"), "codex_cli_rs/0.156.0");
   assert.equal(headers.get("content-type"), "application/json");
+});
+
+test("only guardian reviewer requests are recognized as reviewer calls", () => {
+  const request = (value?: string) =>
+    new Request("https://proxy.example/v1/responses", {
+      headers: value === undefined ? {} : { "x-codex-guardian": value },
+    });
+  assert.equal(isGuardianReviewerRequest(request("reviewer")), true);
+  assert.equal(isGuardianReviewerRequest(request("classifier")), false);
+  assert.equal(isGuardianReviewerRequest(request()), false);
 });
 
 test("codex endpoint headers use deployment identity when the client omits it", () => {

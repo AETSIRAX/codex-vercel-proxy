@@ -2539,7 +2539,7 @@
                   <div class="setting">
                     <div>
                       <h3>Fast mode</h3>
-                      <p>客户端未传 <span class="mono">service_tier</span> 时的兜底：开启后写入 <span class="mono">priority</span>，关闭后不发送。客户端显式传入的值始终优先，模型不支持的 tier 会被丢弃。</p>
+                      <p>客户端未传 <span class="mono">service_tier</span> 时的兜底：开启后写入 <span class="mono">priority</span>，关闭后按模型默认（<span class="mono">gpt-6-sol</span>、<span class="mono">gpt-6-luna</span> 默认仍为 Fast）。客户端显式传入的值始终优先，模型不支持的 tier 会被丢弃。</p>
                     </div>
                     <div class="setting-control">
                       <span class="badge ok" id="fast-mode-status">已开启</span>
