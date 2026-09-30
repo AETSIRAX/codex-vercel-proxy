@@ -59,8 +59,8 @@ vercel.json                  Vercel Functions、Cron、rewrite 配置
 | `ADMIN_TOKEN` | 首次初始化 | `/admin/*` 管理接口访问密钥，后续可在控制面板更新 |
 | `CRON_SECRET` | 是 | `/cron/refresh` 和 `/cron/cleanup` 定时任务密钥 |
 | `CRED_ENCRYPTION_KEY` | 是 | 凭证加密密钥，建议使用长随机字符串 |
-| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4` |
-| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 CLI 版本，默认 `0.156.0` |
+| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5` |
+| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 CLI 版本，默认 `0.159.2` |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
 | `REFRESH_MIN_INTERVAL_SECONDS` | 否 | 强制刷新最小间隔，默认 `300` |
@@ -75,8 +75,8 @@ PROXY_API_KEY=replace-with-local-proxy-key
 ADMIN_TOKEN=replace-with-local-admin-token
 CRON_SECRET=replace-with-local-cron-secret
 CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
-MODELS=gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4
-CODEX_CLI_VERSION=0.156.0
+MODELS=gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5
+CODEX_CLI_VERSION=0.159.2
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
 REFRESH_LEAD_SECONDS=172800
 REFRESH_MIN_INTERVAL_SECONDS=300
@@ -242,7 +242,7 @@ COALESCE(last_used_at, 0) ASC, failure_count ASC, created_at ASC
 
 其中 `401` 会先像 Codex CLI 一样强制刷新当前凭证 token 并用同一凭证重试一次（`CredentialManager.recoverUnauthorized()`），仍失败才切换凭证。恢复时先重读数据库：其他实例已经换过 token 就直接复用；其他实例正持有刷新锁则最多等待 5 秒读取其结果，锁竞争不算刷新失败。失败路径（`markFailure`）不再清空 `refresh_lock_until`，只有刷新流程自己管理这把锁。
 
-凭证成功计数在流式和非流式路径都只在收到 `response.completed` 后写入，HTTP 200 但中途断流按 502 记失败。上游在终态事件前 EOF 时，代理向客户端补发一个 `{"type":"error","code":"bad_upstream_response"}` 事件（Chat 为 error chunk 加 `[DONE]`）再结束流。客户端主动断开会触发流的 `cancel()`，代理随即取消上游读取，不记凭证失败，用量按状态 `499`、错误码 `client_cancelled` 记录。所有可用凭证耗尽时返回最后一次真实的上游错误（例如 429 与其 `Retry-After`），只有一开始就没有凭证才返回 `503 credential_unavailable`。刷新接口返回 `401`、`400 invalid_grant` 或 `refresh_token_expired`、`refresh_token_reused`、`refresh_token_invalidated` 时视为永久失败并停用凭证。
+凭证成功计数在流式和非流式路径都只在收到 `response.completed` 后写入（与 Codex 一样，`incomplete_details.reason` 为 `interrupted` 的 `response.incomplete` 也视为正常结束），HTTP 200 但中途断流按 502 记失败。其他原因的 `response.incomplete` 按 502 `response_incomplete` 返回，但不计入凭证失败。`flex_unavailable`（HTTP 429 或流内 `error`/`response.failed` 事件）是 Flex 容量不足，与账号无关：代理直接返回 429，不冷却凭证，也不轮换。上游在终态事件前 EOF 时，代理向客户端补发一个 `{"type":"error","code":"bad_upstream_response"}` 事件（Chat 为 error chunk 加 `[DONE]`）再结束流。客户端主动断开会触发流的 `cancel()`，代理随即取消上游读取，不记凭证失败，用量按状态 `499`、错误码 `client_cancelled` 记录。所有可用凭证耗尽时返回最后一次真实的上游错误（例如 429 与其 `Retry-After`），只有一开始就没有凭证才返回 `503 credential_unavailable`。刷新接口返回 `401`、`400 invalid_grant` 或 `refresh_token_expired`、`refresh_token_reused`、`refresh_token_invalidated` 时视为永久失败并停用凭证。
 
 单次请求最多尝试 8 条凭证。失败凭证会写入 `last_error`、增加 `failure_count`，并设置 `next_retry_at`。如果上游返回 `HTTP 429: The usage limit has been reached`，或成功请求后的配额快照显示任意窗口剩余额度低于 10%，服务会读取这些窗口的未来 `reset_at`；多个窗口同时低于 10% 时取更晚的重置时间。没有可用重置时间时，失败路径退回 `Retry-After` 或 `FAILURE_COOLDOWN_SECONDS`。主动低余额冷却不增加 `failure_count`。
 

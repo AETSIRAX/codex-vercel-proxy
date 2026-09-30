@@ -32,7 +32,7 @@ test("auth url carries the codex oauth parameters", () => {
   const params = url.searchParams;
   assert.equal(params.get("response_type"), "code");
   assert.equal(params.get("client_id"), "app_EMoamEEZ73f0CkXaXp7hrann");
-  assert.equal(params.get("redirect_uri"), "http://localhost:1455/auth/callback");
+  assert.equal(params.get("redirect_uri"), "http://127.0.0.1:1455/auth/callback");
   assert.equal(
     params.get("scope"),
     "openid profile email offline_access api.connectors.read api.connectors.invoke",
@@ -48,7 +48,7 @@ test("auth url carries the codex oauth parameters", () => {
 
 test("startCodexOAuth returns a consistent verifier/challenge pair", async () => {
   const start = await startCodexOAuth();
-  assert.equal(start.redirectUri, "http://localhost:1455/auth/callback");
+  assert.equal(start.redirectUri, "http://127.0.0.1:1455/auth/callback");
   const url = new URL(start.authUrl);
   assert.equal(url.searchParams.get("state"), start.state);
   assert.equal(url.searchParams.get("code_challenge"), await generateCodeChallenge(start.codeVerifier));
@@ -62,7 +62,7 @@ test("state values are unique and url-safe", () => {
 });
 
 test("parseCallbackInput extracts code and state from a full callback URL", () => {
-  const parsed = parseCallbackInput("http://localhost:1455/auth/callback?code=abc123&state=xyz");
+  const parsed = parseCallbackInput("http://127.0.0.1:1455/auth/callback?code=abc123&state=xyz");
   assert.equal(parsed.code, "abc123");
   assert.equal(parsed.state, "xyz");
 });
@@ -75,14 +75,14 @@ test("parseCallbackInput accepts a bare authorization code", () => {
 
 test("parseCallbackInput surfaces OAuth errors from the callback URL", () => {
   assert.throws(
-    () => parseCallbackInput("http://localhost:1455/auth/callback?error=access_denied&error_description=nope"),
+    () => parseCallbackInput("http://127.0.0.1:1455/auth/callback?error=access_denied&error_description=nope"),
     /access_denied: nope/,
   );
 });
 
 test("parseCallbackInput rejects a URL without a code", () => {
   assert.throws(
-    () => parseCallbackInput("http://localhost:1455/auth/callback?state=only"),
+    () => parseCallbackInput("http://127.0.0.1:1455/auth/callback?state=only"),
     /did not include an authorization code/,
   );
 });

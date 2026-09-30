@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isResponseCompletionEvent,
   parseRetryAfterFromMessage,
   responseErrorStatus,
   responseMetadataHeaders,
@@ -59,6 +60,55 @@ test("response.failed stream errors carry the parsed retry delay", () => {
   });
   assert.equal(overloaded?.status, 503);
   assert.equal(overloaded?.retryAfterSeconds, undefined);
+});
+
+test("flex_unavailable is a terminal 429 that does not count against the credential", () => {
+  const fromErrorEvent = responseStreamError({
+    type: "error",
+    error: { code: "flex_unavailable", message: "Flex capacity is unavailable right now." },
+  });
+  assert.equal(fromErrorEvent?.status, 429);
+  assert.equal(fromErrorEvent?.code, "flex_unavailable");
+  assert.equal(fromErrorEvent?.message, "Flex capacity is unavailable right now.");
+  assert.equal(fromErrorEvent?.credentialFailure, false);
+
+  const fromFailed = responseStreamError({
+    type: "response.failed",
+    response: { error: { code: "flex_unavailable" } },
+  });
+  assert.equal(fromFailed?.status, 429);
+  assert.equal(fromFailed?.message, "Flex capacity unavailable.");
+  assert.equal(fromFailed?.credentialFailure, false);
+
+  // Other stream error events are left to the stream consumers, like codex.
+  assert.equal(responseStreamError({ type: "error", error: { code: "other" } }), undefined);
+});
+
+test("interrupted incomplete responses complete the turn; other reasons are errors", () => {
+  const interrupted = {
+    type: "response.incomplete",
+    response: { status: "incomplete", incomplete_details: { reason: "interrupted" } },
+  };
+  const truncated = {
+    type: "response.incomplete",
+    response: { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } },
+  };
+
+  assert.equal(responseStreamError(interrupted), undefined);
+  assert.equal(isResponseCompletionEvent(interrupted), true);
+  assert.equal(isResponseCompletionEvent({ type: "response.completed", response: {} }), true);
+  assert.equal(isResponseCompletionEvent(truncated), false);
+
+  const error = responseStreamError(truncated);
+  assert.equal(error?.status, 502);
+  assert.equal(error?.message, "Incomplete response returned, reason: max_output_tokens");
+  // An incomplete response is not an account problem, so no cooldown.
+  assert.equal(error?.credentialFailure, false);
+  assert.equal(
+    responseStreamError({ type: "response.failed", response: { error: { code: "server_is_overloaded" } } })
+      ?.credentialFailure,
+    true,
+  );
 });
 
 test("aggregated replies surface the response headers codex reads", () => {

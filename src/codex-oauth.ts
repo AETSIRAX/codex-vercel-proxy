@@ -8,7 +8,7 @@ import { base64UrlEncode, isRecord, numberValue, stringValue, textToBytes } from
 const OPENAI_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
+const CODEX_REDIRECT_URI = "http://127.0.0.1:1455/auth/callback";
 // Codex CLI (codex-rs/login/src/server.rs) requests the connector scopes as well.
 const CODEX_SCOPE = "openid profile email offline_access api.connectors.read api.connectors.invoke";
 const CODEX_ORIGINATOR = "codex_cli_rs";
@@ -105,7 +105,7 @@ export interface CallbackParams {
 }
 
 // Accepts either the raw authorization code or the full callback URL the operator
-// copies out of the browser address bar (e.g. http://localhost:1455/auth/callback?code=...&state=...).
+// copies out of the browser address bar (e.g. http://127.0.0.1:1455/auth/callback?code=...&state=...).
 export function parseCallbackInput(raw: string): CallbackParams {
   const trimmed = raw.trim();
   if (trimmed === "") {

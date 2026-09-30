@@ -18,7 +18,7 @@ Codex Vercel Proxy 是一个部署在 Vercel Functions 上的 Codex 代理服务
 
 - OpenAI 兼容接口：`/v1/models`、`/v1/responses`、`/v1/chat/completions`
 - Codex 后端接口：`/v1/alpha/search`、`/v1/responses/compact`、`/v1/images/generations`、`/v1/images/edits`、`/v1/memories/trace_summarize`
-- Responses Lite 模型：内置 GPT-6 系列（`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`）和 GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`），按 Codex 模型目录自动以 Responses Lite 协议适配上游请求，工具、指令和稳定 id 的组装方式与 Codex CLI 一致；思考等级 `ultra`、`persistent` 按 Codex 的逐模型规则映射
+- Responses Lite 模型：内置 GPT-6 系列（`gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`，其中 `gpt-6.1-sol` 是 Codex 当前默认模型）和 GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`），按 Codex 模型目录自动以 Responses Lite 协议适配上游请求，工具、指令和稳定 id 的组装方式与 Codex CLI 一致；思考等级 `ultra`、`persistent` 按 Codex 的逐模型规则映射
 - 请求体压缩：兼容 Codex CLI 默认开启的 zstd 请求体压缩（同时支持 gzip、deflate、br），运行时不支持时返回 `415` 并提示关闭 `enable_request_compression`
 - OAuth 登录：控制面板内置 Codex OAuth 登录（PKCE），浏览器登录 OpenAI 账号后粘贴回调地址即可自动获取并导入凭证，无需手动准备 token JSON
 - 凭证池管理：支持多条 Codex 凭证导入、状态查看、启用、禁用、刷新和删除
@@ -93,8 +93,8 @@ Codex upstream / Postgres
 | `ADMIN_TOKEN` | 首次初始化 | `/admin/*` 和控制面板访问密钥，后续可在控制面板更新 |
 | `CRON_SECRET` | 是 | `/cron/refresh` 和 `/cron/cleanup` 定时任务接口密钥 |
 | `CRED_ENCRYPTION_KEY` | 是 | 凭证加密密钥，建议使用长随机字符串 |
-| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4` |
-| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 Codex CLI 版本，默认 `0.156.0`（`gpt-6-sol`、`gpt-6-luna` 要求 0.155.0 及以上） |
+| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5` |
+| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 Codex CLI 版本，默认 `0.159.2`（`gpt-6-sol`、`gpt-6-luna` 要求 0.155.0 及以上） |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
 | `REFRESH_MIN_INTERVAL_SECONDS` | 否 | 强制刷新最小间隔，默认 `300` |
@@ -153,8 +153,8 @@ PROXY_API_KEY=replace-with-local-proxy-key
 ADMIN_TOKEN=replace-with-local-admin-token
 CRON_SECRET=replace-with-local-cron-secret
 CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
-MODELS=gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4
-CODEX_CLI_VERSION=0.156.0
+MODELS=gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5
+CODEX_CLI_VERSION=0.159.2
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
 REFRESH_LEAD_SECONDS=172800
 REFRESH_MIN_INTERVAL_SECONDS=300
@@ -218,7 +218,7 @@ curl "https://<vercel-domain>/v1/chat/completions" \
   -H "Authorization: Bearer <PROXY_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5.4",
+    "model": "gpt-6.1-sol",
     "messages": [
       {"role": "user", "content": "请只回复一句简短中文。"}
     ]
@@ -232,7 +232,7 @@ curl "https://<vercel-domain>/v1/responses" \
   -H "Authorization: Bearer <PROXY_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5.4",
+    "model": "gpt-6.1-sol",
     "input": "请只回复一句简短中文。"
   }'
 ```
@@ -277,7 +277,7 @@ curl -X POST "https://<vercel-domain>/admin/credentials/import" \
 除手动导入 token JSON 外，凭据池页右上角的「导入凭据」抽屉内置 Codex OAuth 登录（PKCE），无需自备 token：
 
 1. 点击「开始登录」，在新标签页登录 OpenAI 账号；
-2. 登录成功后浏览器会跳转到 `http://localhost:1455/auth/callback?code=...`，由于本服务不在本地监听该端口，页面打不开属于正常现象；
+2. 登录成功后浏览器会跳转到 `http://127.0.0.1:1455/auth/callback?code=...`，由于本服务不在本地监听该端口，页面打不开属于正常现象；
 3. 复制浏览器地址栏中完整的回调地址，粘贴回抽屉并点击「完成登录并导入」，服务会自动换取 token 并入库。
 
 OAuth 请求的 scope（含 `api.connectors.read`、`api.connectors.invoke`）和 `originator=codex_cli_rs` 参数与 Codex CLI 一致。OAuth 客户端复用 Codex CLI 的固定回环回调地址，因此这里采用「手动粘贴回调」的无状态实现，PKCE `code_verifier` 仅在当前浏览器内存中短暂保存。对应管理接口为 `POST /admin/oauth/codex/start` 和 `POST /admin/oauth/codex/complete`，详见[接口文档](docs/API_CN.md)。
@@ -318,16 +318,16 @@ OpenAI 的 `refresh_token` 是一次性 token。刷新成功后，服务会把�
 
 ## Responses Lite 模型与思考等级
 
-代理内置一份 Codex 模型目录快照（`src/codex-models.ts`，来源于 openai/codex main 分支 2026-09-23 的 `models.json`），用于判断哪些模型走 Responses Lite 协议、各模型支持的思考等级、service tier 和默认 service tier。GPT-6 系列（`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`）、GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`）、`gpt-daybreak-*` 和 `codex-auto-review` 在上游使用 Responses Lite 协议；目录之外的模型按 `gpt-6`、`gpt-5.6`、`gpt-daybreak`、`codex-auto-review` 前缀判断。代理会对这些模型自动完成适配：
+代理内置一份 Codex 模型目录快照（`src/codex-models.ts`，来源于 Codex CLI 0.159.2（2026-09-29）的 `models.json`），用于判断哪些模型走 Responses Lite 协议、各模型支持的思考等级、service tier 和默认 service tier。GPT-6 系列（`gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`）、GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`）、`gpt-daybreak-*` 和 `codex-auto-review` 在上游使用 Responses Lite 协议；目录之外的模型按 `gpt-6`、`gpt-5.6`、`gpt-daybreak`、`codex-auto-review` 系列前缀判断（同时覆盖 `gpt-6-*` 这类变体和 `gpt-6.2-*` 这类小版本）。`gpt-5.4` 已随 Codex 下线，不再内置。代理会对这些模型自动完成适配：
 
 - 上游请求附带 `x-openai-internal-codex-responses-lite: true` 请求头，`parallel_tool_calls` 固定为 `false`，`reasoning.context` 缺省时补为 `all_turns`；
 - Lite 请求会清除 message、`function_call_output` 和 `custom_tool_call_output` 图片内容中的 `detail` 字段；
 - 工具和指令的组装方式与 Codex CLI 完全一致：`function`、`custom` 工具会被包进 `{"type":"namespace","name":"functions","tools":[...]}`（放在第一个函数工具原来的位置），`web_search`、`tool_search` 等其他工具保持原顺序，整个工具列表作为一个 `additional_tools` 项（没有工具时为空列表）前置到 `input`，顶层 `tools` 和 `instructions` 不再发送；非空 `instructions` 转换为紧随其后的 developer 消息。这两个前缀项带有稳定 id（`at_<uuidv5>`、`msg_<uuidv5>`，命名空间由当前 `thread-id` 派生，与 Codex 相同），同一线程内内容不变时 id 不变，便于上游缓存前缀；
 - 如果客户端（如 Codex CLI 0.144+）已经发送 `additional_tools` 项，输入保持原样；
 - 托管工具（如 `web_search`）会随其他工具一起进入 `additional_tools`。Codex CLI 自身不会给 lite 模型发送托管搜索（其搜索由 CLI 本地 `web.run` 工具执行），lite 上游是否接受由上游决定；需要服务端 `web_search` 请使用 `gpt-5.5` 及更早模型；
-- 思考等级按模型目录映射：`ultra` 是 Codex 客户端本地概念，发送上游时取该模型的 `multi_agent_reasoning_effort`（如 `gpt-6-astra` 为 `xhigh`），没有则取 `max`（如 `gpt-6-sol`、`gpt-6-luna`），仍不支持时取该模型最高的非 ultra 等级（如 `gpt-5.5` 为 `xhigh`）；`persistent` 映射为 `disabled`；
-- 无论请求是否带 `reasoning`，都会追加 `include: ["reasoning.encrypted_content"]`，与 Codex CLI 一致；
-- Codex App/CLI 传入的 `User-Agent` 和 `version` 会原样转发。普通客户端缺少 `User-Agent` 时，代理用 `CODEX_CLI_VERSION`（默认 `0.156.0`）生成 `codex_cli_rs/<版本>`；当前 Codex CLI 已不再发送 `version` 请求头，代理也不会伪造它。旧的 `USER_AGENT` 环境变量不再参与请求构造。
+- 思考等级按模型目录映射：`ultra` 是 Codex 客户端本地概念，发送上游时取该模型的 `multi_agent_reasoning_effort`（如 `gpt-6.1-sol`、`gpt-6-astra` 为 `xhigh`），没有则取 `max`（如 `gpt-6-sol`、`gpt-6-luna`），仍不支持时取该模型最高的非 ultra 等级（如 `gpt-5.5` 为 `xhigh`）；`persistent` 映射为 `disabled`；
+- 无论请求是否带 `reasoning`，都会追加 `include: ["reasoning.encrypted_content"]`，与 Codex CLI 一致；可解析为非负整数的自定义思考等级（如 `"64"`）按 JSON 数字发送，与 Codex 0.159 一致；
+- Codex App/CLI 传入的 `User-Agent` 和 `version` 会原样转发。普通客户端缺少 `User-Agent` 时，代理用 `CODEX_CLI_VERSION`（默认 `0.159.2`）生成 `codex_cli_rs/<版本>`；当前 Codex CLI 已不再发送 `version` 请求头，代理也不会伪造它。旧的 `USER_AGENT` 环境变量不再参与请求构造。
 
 `gpt-5.5` 及更早模型不受 lite 适配影响，仍按原有方式转发。
 

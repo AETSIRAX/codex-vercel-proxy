@@ -80,7 +80,7 @@ curl -i "https://<vercel-domain>/healthz"
 
 ## GET /v1/models
 
-普通请求返回 `MODELS` 环境变量配置的 OpenAI 格式模型列表。未配置时默认返回 `gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4`。
+普通请求返回 `MODELS` 环境变量配置的 OpenAI 格式模型列表。未配置时默认返回 `gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5`。
 
 Codex CLI 携带 `client_version` 查询参数时，请求会转发到 Codex 原生 `/models` 端点，响应保持 `{"models":[...]}` 格式，并透传 `If-None-Match`/`ETag` 缓存语义。
 
@@ -97,6 +97,12 @@ curl "https://<vercel-domain>/v1/models" \
 {
   "object": "list",
   "data": [
+    {
+      "id": "gpt-6.1-sol",
+      "object": "model",
+      "created": 0,
+      "owned_by": "codex"
+    },
     {
       "id": "gpt-5.6-sol",
       "object": "model",
@@ -117,12 +123,6 @@ curl "https://<vercel-domain>/v1/models" \
     },
     {
       "id": "gpt-5.5",
-      "object": "model",
-      "created": 0,
-      "owned_by": "codex"
-    },
-    {
-      "id": "gpt-5.4",
       "object": "model",
       "created": 0,
       "owned_by": "codex"
@@ -156,7 +156,7 @@ curl "https://<vercel-domain>/v1/responses" \
   -H "Authorization: Bearer <PROXY_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5.4",
+    "model": "gpt-6.1-sol",
     "input": "Say hello in one short sentence."
   }'
 ```
@@ -169,7 +169,7 @@ curl "https://<vercel-domain>/v1/responses" \
   "object": "response",
   "created_at": 1770000000,
   "status": "completed",
-  "model": "gpt-5.4",
+  "model": "gpt-6.1-sol",
   "output": [
     {
       "type": "message",
@@ -197,7 +197,7 @@ curl -N "https://<vercel-domain>/v1/responses" \
   -H "Authorization: Bearer <PROXY_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5.4",
+    "model": "gpt-6.1-sol",
     "stream": true,
     "input": "Say hello."
   }'
@@ -213,7 +213,7 @@ data: {"type":"response.output_text.delta","delta":"Hello",...}
 data: {"type":"response.completed","response":{...}}
 ```
 
-上游在 `response.completed` 或 `response.failed` 之前断开时，代理会补发一个 `data: {"type":"error","code":"bad_upstream_response","message":"..."}` 事件再结束流，而不是让流看起来正常完成；Chat Completions 对应输出一个 `error` chunk 后跟 `[DONE]`。客户端主动断开连接时，代理会立即取消上游请求，不计入凭证失败。
+`incomplete_details.reason` 为 `interrupted` 的 `response.incomplete` 与 Codex 一样按正常结束处理；Flex 容量不足（`flex_unavailable`）直接返回 429，不冷却凭证也不轮换。上游在 `response.completed` 或 `response.failed` 之前断开时，代理会补发一个 `data: {"type":"error","code":"bad_upstream_response","message":"..."}` 事件再结束流，而不是让流看起来正常完成；Chat Completions 对应输出一个 `error` chunk 后跟 `[DONE]`。客户端主动断开连接时，代理会立即取消上游请求，不计入凭证失败。
 
 ### Responses 请求处理规则
 
@@ -259,7 +259,7 @@ user
 - `session-id` 和 `thread-id`：客户端显式传入时使用请求头值；否则使用 `prompt_cache_key` 或代理按 API KEY 生成的稳定 UUID。
 - `X-Client-Request-Id`：客户端显式传入 `x-client-request-id` 时使用该值；否则使用当前 `thread-id`。
 - `originator`：客户端显式传入时使用该值；否则为 `codex_cli_rs`。
-- `User-Agent`：客户端显式传入时原样转发；否则生成 `codex_cli_rs/<CODEX_CLI_VERSION>`（默认 `0.156.0`）。旧的 `USER_AGENT` 环境变量不再参与请求构造。
+- `User-Agent`：客户端显式传入时原样转发；否则生成 `codex_cli_rs/<CODEX_CLI_VERSION>`（默认 `0.159.2`）。旧的 `USER_AGENT` 环境变量不再参与请求构造。
 - `version`：客户端显式传入时原样转发；否则不发送（当前 Codex CLI 已不再发送该请求头）。
 - `x-codex-routing-hint`：客户端显式传入时透传；否则按 `model=<slug>[;tier=<service_tier>]` 生成（`x-codex-guardian: reviewer` 请求不生成）。
 - `X-OpenAI-Fedramp: true`：凭证 id_token 标记为 FedRAMP 账号时附加。
@@ -283,7 +283,7 @@ curl "https://<vercel-domain>/v1/chat/completions" \
   -H "Authorization: Bearer <PROXY_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5.4",
+    "model": "gpt-6.1-sol",
     "messages": [
       {"role": "user", "content": "请只回复两个汉字：正常"}
     ]
@@ -297,7 +297,7 @@ curl "https://<vercel-domain>/v1/chat/completions" \
   "id": "chatcmpl-...",
   "object": "chat.completion",
   "created": 1770000000,
-  "model": "gpt-5.4",
+  "model": "gpt-6.1-sol",
   "choices": [
     {
       "index": 0,
@@ -323,7 +323,7 @@ curl -N "https://<vercel-domain>/v1/chat/completions" \
   -H "Authorization: Bearer <PROXY_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5.4",
+    "model": "gpt-6.1-sol",
     "stream": true,
     "messages": [
       {"role": "user", "content": "Say hello."}
@@ -559,11 +559,11 @@ curl -X POST "https://<vercel-domain>/admin/oauth/codex/start" \
   "auth_url": "https://auth.openai.com/oauth/authorize?...",
   "state": "...",
   "code_verifier": "...",
-  "redirect_uri": "http://localhost:1455/auth/callback"
+  "redirect_uri": "http://127.0.0.1:1455/auth/callback"
 }
 ```
 
-在浏览器打开 `auth_url` 完成 OpenAI 登录。OAuth 客户端复用 Codex CLI 的固定回环地址 `http://localhost:1455/auth/callback`，因此登录成功后浏览器会跳转到一个无法打开的本地地址（属正常现象）。复制浏览器地址栏中完整的回调地址，用于下一步。
+在浏览器打开 `auth_url` 完成 OpenAI 登录。OAuth 客户端复用 Codex CLI 的固定回环地址 `http://127.0.0.1:1455/auth/callback`，因此登录成功后浏览器会跳转到一个无法打开的本地地址（属正常现象）。复制浏览器地址栏中完整的回调地址，用于下一步。
 
 ## POST /admin/oauth/codex/complete
 
@@ -574,7 +574,7 @@ curl -X POST "https://<vercel-domain>/admin/oauth/codex/complete" \
   -H "Authorization: Bearer <ADMIN_TOKEN>" \
   -H "Content-Type: application/json" \
   --data '{
-    "redirect_url": "http://localhost:1455/auth/callback?code=...&state=...",
+    "redirect_url": "http://127.0.0.1:1455/auth/callback?code=...&state=...",
     "code_verifier": "<start 返回的 code_verifier>",
     "state": "<start 返回的 state>"
   }'

@@ -18,6 +18,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 
 test("responses lite models are detected from the codex catalog", () => {
   assert.equal(isResponsesLiteModel("gpt-6-astra"), true);
+  assert.equal(isResponsesLiteModel("gpt-6.1-sol"), true);
   assert.equal(isResponsesLiteModel("gpt-6-sol"), true);
   assert.equal(isResponsesLiteModel("gpt-6-luna"), true);
   assert.equal(isResponsesLiteModel("gpt-5.6-sol"), true);
@@ -313,6 +314,34 @@ test("guardian reviewer requests never carry a service tier", async () => {
   );
 
   assert.equal("service_tier" in reviewer, false);
+});
+
+test("integer custom reasoning efforts are sent as JSON numbers like codex", async () => {
+  const numericString = await prepareCodexPayload(
+    { model: "gpt-5.5", input: "hi", reasoning: { effort: "64" } },
+    true,
+    settings,
+  );
+  const numeric = await prepareCodexPayload(
+    { model: "gpt-5.5", input: "hi", reasoning: { effort: 32 } },
+    true,
+    settings,
+  );
+  const named = await prepareCodexPayload(
+    { model: "gpt-5.5", input: "hi", reasoning: { effort: "high" } },
+    true,
+    settings,
+  );
+  const negative = await prepareCodexPayload(
+    { model: "gpt-5.5", input: "hi", reasoning: { effort: "-1" } },
+    true,
+    settings,
+  );
+
+  assert.deepEqual(numericString.reasoning, { effort: 64 });
+  assert.deepEqual(numeric.reasoning, { effort: 32 });
+  assert.deepEqual(named.reasoning, { effort: "high" });
+  assert.deepEqual(negative.reasoning, { effort: "-1" });
 });
 
 test("prompt cache key from the request identity is applied", async () => {

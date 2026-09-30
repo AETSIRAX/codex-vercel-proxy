@@ -8,7 +8,16 @@ export interface ResponseStreamError {
   message: string;
   status: number;
   retryAfterSeconds?: number;
+  // False when the failure says nothing about the account (Flex capacity,
+  // incomplete responses), so the credential must not be cooled down for it.
+  credentialFailure: boolean;
 }
+
+export const FLEX_UNAVAILABLE_CODE = "flex_unavailable";
+const FLEX_UNAVAILABLE_MESSAGE = "Flex capacity unavailable.";
+// Codex ends a turn on a response.incomplete with this reason as if it had
+// completed (the upstream preempted it); every other reason is an error.
+const INTERRUPTED_INCOMPLETE_REASON = "interrupted";
 
 // Error codes Codex maps in codex-api/src/sse/responses.rs and api_bridge.rs.
 const INVALID_REQUEST_ERROR_CODES = new Set([
@@ -43,9 +52,35 @@ const RESPONSE_METADATA_HEADERS = [
   "x-codex-rate-limit-reached-type",
 ];
 
+// Codex treats flex_unavailable as a terminal error on HTTP 429 replies, stream
+// `error` events and response.failed (openai/codex#47967).
+export function isFlexUnavailableError(error: unknown): boolean {
+  return isRecord(error) && error.code === FLEX_UNAVAILABLE_CODE;
+}
+
+export function incompleteResponseReason(event: JsonObject): string | undefined {
+  if (event.type !== "response.incomplete") {
+    return undefined;
+  }
+  const response = isRecord(event.response) ? event.response : undefined;
+  const details = isRecord(response?.incomplete_details) ? response.incomplete_details : undefined;
+  return stringValue(details?.reason) ?? "unknown";
+}
+
+// response.completed, or a response.incomplete the upstream interrupted.
+export function isResponseCompletionEvent(event: JsonObject): boolean {
+  return event.type === "response.completed" || incompleteResponseReason(event) === INTERRUPTED_INCOMPLETE_REASON;
+}
+
 export function responseStreamError(event: JsonObject): ResponseStreamError | undefined {
+  if (event.type === "error") {
+    return isFlexUnavailableError(event.error) ? flexUnavailableError(event.error) : undefined;
+  }
   if (event.type === "response.failed") {
     const response = isRecord(event.response) ? event.response : undefined;
+    if (isFlexUnavailableError(response?.error)) {
+      return flexUnavailableError(response?.error);
+    }
     const error = isRecord(response?.error) ? response.error : undefined;
     const code = stringValue(error?.code) ?? "response_failed";
     const errorType = stringValue(error?.type);
@@ -56,19 +91,29 @@ export function responseStreamError(event: JsonObject): ResponseStreamError | un
       message,
       status: responseErrorStatus(code, errorType),
       retryAfterSeconds: RATE_LIMIT_ERROR_CODES.has(code) ? parseRetryAfterFromMessage(message) : undefined,
+      credentialFailure: true,
     };
   }
-  if (event.type === "response.incomplete") {
-    const response = isRecord(event.response) ? event.response : undefined;
-    const details = isRecord(response?.incomplete_details) ? response.incomplete_details : undefined;
-    const reason = stringValue(details?.reason) ?? "unknown";
+  const reason = incompleteResponseReason(event);
+  if (reason !== undefined && reason !== INTERRUPTED_INCOMPLETE_REASON) {
     return {
       code: "response_incomplete",
       message: `Incomplete response returned, reason: ${reason}`,
       status: 502,
+      credentialFailure: false,
     };
   }
   return undefined;
+}
+
+function flexUnavailableError(error: unknown): ResponseStreamError {
+  const message = isRecord(error) ? stringValue(error.message) : undefined;
+  return {
+    code: FLEX_UNAVAILABLE_CODE,
+    message: message ?? FLEX_UNAVAILABLE_MESSAGE,
+    status: 429,
+    credentialFailure: false,
+  };
 }
 
 export function responseErrorStatus(code: string, errorType: string | undefined): number {

@@ -32,6 +32,7 @@ const DEFAULT_FUNCTION_NAMESPACE = "functions";
 const SERVICE_TIER_DEFAULT_REQUEST_VALUE = "default";
 const SERVICE_TIER_FLEX = "flex";
 const FAST_MODE_SERVICE_TIER = "priority";
+const NUMERIC_REASONING_EFFORT_PATTERN = /^\d+$/;
 
 export async function prepareCodexPayload(
   input: JsonObject,
@@ -118,7 +119,8 @@ function normalizeReasoningInclude(payload: JsonObject): void {
 }
 
 // "ultra" and "persistent" are codex client-side reasoning levels; the wire value
-// depends on the model (see reasoningEffortForRequest).
+// depends on the model (see reasoningEffortForRequest). Like Codex, custom
+// efforts that parse as an unsigned integer go out as JSON numbers ("64" -> 64).
 function normalizeReasoningEffort(payload: JsonObject): void {
   if (!isRecord(payload.reasoning)) {
     return;
@@ -127,7 +129,10 @@ function normalizeReasoningEffort(payload: JsonObject): void {
   if (effort === undefined) {
     return;
   }
-  payload.reasoning.effort = reasoningEffortForRequest(stringValue(payload.model), effort);
+  const resolved = reasoningEffortForRequest(stringValue(payload.model), effort);
+  payload.reasoning.effort = NUMERIC_REASONING_EFFORT_PATTERN.test(resolved) && Number.isSafeInteger(Number(resolved))
+    ? Number(resolved)
+    : resolved;
 }
 
 function normalizeStreamOptions(payload: JsonObject): void {

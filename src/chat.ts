@@ -3,6 +3,7 @@ import {
   emptyUpstreamBodyResponse,
   fetchCodexWithRotation,
   extractResponseText,
+  isResponseCompletionEvent,
   patchCompletedOutput,
   recordClientCancelled,
   reportResponseStreamError,
@@ -95,7 +96,7 @@ export async function proxyChatCompletions(request: Request, env: AppEnv, input:
           return errorResponse(streamError.status, streamError.message, streamError.code);
         }
       }
-      if (parsed?.type === "response.completed") {
+      if (parsed && isResponseCompletionEvent(parsed)) {
         completed = patchCompletedOutput(parsed, outputItems);
         break;
       }
@@ -203,7 +204,10 @@ function chatReasoning(input: JsonObject, liteModel: boolean): JsonObject | unde
   if (isRecord(input.reasoning)) {
     return structuredClone(input.reasoning) as JsonObject;
   }
-  const effort = stringValue(input.reasoning_effort);
+  const effort =
+    typeof input.reasoning_effort === "number" && Number.isFinite(input.reasoning_effort)
+      ? String(input.reasoning_effort)
+      : stringValue(input.reasoning_effort);
   if (effort === undefined) {
     return undefined;
   }
@@ -738,7 +742,7 @@ async function streamChat(
             });
             continue;
           }
-          if (parsed.type === "response.completed") {
+          if (isResponseCompletionEvent(parsed)) {
             const completed = patchCompletedOutput(parsed, outputItems);
             const responseValue = responseObject(completed);
             completedSeen = true;

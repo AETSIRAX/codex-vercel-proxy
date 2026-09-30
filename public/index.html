@@ -2628,10 +2628,10 @@
             </div>
             <div class="hidden" id="oauth-steps" style="display: flex; flex-direction: column; gap: 10px;">
               <div class="steps">
-                <div><span class="n">1</span><span>已在新标签页打开登录页，登录后会跳转到 <span class="mono">localhost:1455</span>（页面打不开属于正常现象）</span></div>
+                <div><span class="n">1</span><span>已在新标签页打开登录页，登录后会跳转到 <span class="mono">127.0.0.1:1455</span>（页面打不开属于正常现象）</span></div>
                 <div><span class="n">2</span><span>复制地址栏中完整的回调地址，粘贴到下方后点击「完成登录」</span></div>
               </div>
-              <textarea class="textarea" id="oauth-callback" spellcheck="false" style="min-height: 72px;" placeholder="http://localhost:1455/auth/callback?code=...&amp;state=..."></textarea>
+              <textarea class="textarea" id="oauth-callback" spellcheck="false" style="min-height: 72px;" placeholder="http://127.0.0.1:1455/auth/callback?code=...&amp;state=..."></textarea>
               <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                 <a class="oauth-link" id="oauth-open-link" href="#" target="_blank" rel="noopener">没有自动打开？重新打开登录页
                   <svg class="ico" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6.5 3.5H4a1 1 0 0 0-1 1V12a1 1 0 0 0 1 1h7.5a1 1 0 0 0 1-1V9.5M9.5 3h3.5v3.5M13 3 7.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>

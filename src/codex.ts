@@ -15,6 +15,8 @@ import {
 import { codexBaseURL } from "./env.js";
 import type { AppEnv } from "./env.js";
 import {
+  FLEX_UNAVAILABLE_CODE,
+  isResponseCompletionEvent,
   responseMetadataHeaders,
   responseStreamError,
   type ResponseStreamError,
@@ -42,7 +44,12 @@ export interface OutputItem {
   item: unknown;
 }
 
-export { responseMetadataHeaders, responseStreamError, type ResponseStreamError } from "./codex-errors.js";
+export {
+  isResponseCompletionEvent,
+  responseMetadataHeaders,
+  responseStreamError,
+  type ResponseStreamError,
+} from "./codex-errors.js";
 
 interface UpstreamResult {
   response: Response;
@@ -131,6 +138,9 @@ export async function proxyCodexJsonEndpoint(
     }
     const retryAfter = retryAfterSeconds(upstream.headers.get("retry-after"));
     const error = summarizeErrorBody(body);
+    if (isFlexUnavailableReply(upstream.status, error)) {
+      return responseFromConsumedUpstream(upstream, body);
+    }
     const usageErrorType = usageLimitErrorType(error.errorType, error.code);
     let rateLimits = parseRateLimitHeaders(upstream.headers);
     if (upstream.status === 429 && usageErrorType !== undefined) {
@@ -193,6 +203,9 @@ export async function fetchCodexWithRotation(
     const body = await upstream.text();
     const retryAfter = retryAfterSeconds(upstream.headers.get("retry-after"));
     const error = summarizeErrorBody(body);
+    if (isFlexUnavailableReply(upstream.status, error)) {
+      return responseFromConsumedUpstream(upstream, body);
+    }
     const usageErrorType = usageLimitErrorType(error.errorType, error.code);
     let rateLimits = parseRateLimitHeaders(upstream.headers);
     if (upstream.status === 429 && usageErrorType !== undefined) {
@@ -361,6 +374,9 @@ export async function reportResponseStreamError(
   response: Response,
   error: ResponseStreamError,
 ): Promise<void> {
+  if (!error.credentialFailure) {
+    return;
+  }
   const manager = credentialManager(env);
   const usageErrorType = usageLimitErrorType(error.errorType, error.code);
   let rateLimits = parseRateLimitHeaders(response.headers);
@@ -425,7 +441,7 @@ async function aggregateResponses(
         });
         return errorResponse(streamError.status, streamError.message, streamError.code);
       }
-      if (parsed.type === "response.completed") {
+      if (isResponseCompletionEvent(parsed)) {
         completed = patchCompletedOutput(parsed, outputItems);
         break;
       }
@@ -521,7 +537,7 @@ async function streamResponses(
             push(parsed);
             break;
           }
-          if (parsed.type === "response.completed") {
+          if (isResponseCompletionEvent(parsed)) {
             const completed = patchCompletedOutput(parsed, outputItems);
             completedSeen = true;
             scheduleCredentialSuccessUpdate(env, credential.id, response.status);
@@ -690,6 +706,12 @@ export function patchCompletedOutput(event: JsonObject, outputItems: OutputItem[
   });
   response.output = sorted.map((entry) => entry.item) as JsonValue;
   return { ...event, response: response as JsonValue };
+}
+
+// Flex capacity is not tied to the account, so another credential will not
+// help: surface it without cooling the credential down or rotating.
+function isFlexUnavailableReply(status: number, error: UpstreamErrorSummary): boolean {
+  return status === 429 && error.code === FLEX_UNAVAILABLE_CODE;
 }
 
 function isRotatableStatus(status: number): boolean {

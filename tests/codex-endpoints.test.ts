@@ -98,7 +98,7 @@ test("codex JSON endpoint headers apply the verified default client identity", (
 
   // Current Codex clients identify themselves through User-Agent only.
   assert.equal(headers.has("version"), false);
-  assert.equal(headers.get("user-agent"), "codex_cli_rs/0.156.0");
+  assert.equal(headers.get("user-agent"), "codex_cli_rs/0.159.2");
   assert.equal(headers.get("content-type"), "application/json");
 });
 
