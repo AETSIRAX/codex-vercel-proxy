@@ -22,6 +22,7 @@ import {
   type ResponseStreamError,
 } from "./codex-errors.js";
 import { isResponsesLiteModel, prepareCodexPayload } from "./codex-payload.js";
+import { fetchWithTransientRetry, UpstreamTransportError } from "./codex-retry.js";
 import { isUsageLimitErrorType, parseRateLimitHeaders } from "./rate-limits.js";
 import { settingsStore } from "./settings.js";
 import { readSseData, readSseDataFromReader, encodeSseData, parseSseJson } from "./sse.js";
@@ -120,9 +121,15 @@ export async function proxyCodexJsonEndpoint(
       return lastError ?? errorResponse(503, "no available codex credential", "credential_unavailable");
     }
 
-    const { response: upstream, credential } = await fetchWithUnauthorizedRecovery(manager, selected, (candidate) =>
-      fetchCodexJsonEndpointOnce(request, env, candidate, path, input, query),
-    );
+    let attemptResult: { response: Response; credential: SelectedCredential };
+    try {
+      attemptResult = await fetchWithUnauthorizedRecovery(manager, selected, (candidate) =>
+        fetchWithTransientRetry(() => fetchCodexJsonEndpointOnce(request, env, candidate, path, input, query)),
+      );
+    } catch (error) {
+      return transportErrorResponse(error);
+    }
+    const { response: upstream, credential } = attemptResult;
     if (upstream.ok || upstream.status === 304) {
       scheduleCredentialSuccessUpdate(env, credential.id, upstream.status);
       scheduleCredentialRateLimitUpdate(env, credential);
@@ -138,7 +145,7 @@ export async function proxyCodexJsonEndpoint(
     }
     const retryAfter = retryAfterSeconds(upstream.headers.get("retry-after"));
     const error = summarizeErrorBody(body);
-    if (isFlexUnavailableReply(upstream.status, error)) {
+    if (isFlexUnavailableReply(upstream.status, error) || !isRotatableStatus(upstream.status)) {
       return responseFromConsumedUpstream(upstream, body);
     }
     const usageErrorType = usageLimitErrorType(error.errorType, error.code);
@@ -160,9 +167,6 @@ export async function proxyCodexJsonEndpoint(
     });
     lastError = responseFromConsumedUpstream(upstream, body);
     excluded.push(credential.id);
-    if (!isRotatableStatus(upstream.status)) {
-      return lastError;
-    }
   }
 
   return lastError ?? errorResponse(503, "no available codex credential", "credential_unavailable");
@@ -191,9 +195,15 @@ export async function fetchCodexWithRotation(
       return lastError ?? errorResponse(503, "no available codex credential", "credential_unavailable");
     }
 
-    const { response: upstream, credential } = await fetchWithUnauthorizedRecovery(manager, selected, (candidate) =>
-      fetchCodexOnce(request, env, candidate, payload, stream, identity),
-    );
+    let attemptResult: { response: Response; credential: SelectedCredential };
+    try {
+      attemptResult = await fetchWithUnauthorizedRecovery(manager, selected, (candidate) =>
+        fetchWithTransientRetry(() => fetchCodexOnce(request, env, candidate, payload, stream, identity)),
+      );
+    } catch (error) {
+      return transportErrorResponse(error);
+    }
+    const { response: upstream, credential } = attemptResult;
     if (upstream.ok) {
       // Success is recorded by the stream consumers once response.completed
       // arrives; an HTTP 200 alone can still end in a truncated stream.
@@ -203,7 +213,9 @@ export async function fetchCodexWithRotation(
     const body = await upstream.text();
     const retryAfter = retryAfterSeconds(upstream.headers.get("retry-after"));
     const error = summarizeErrorBody(body);
-    if (isFlexUnavailableReply(upstream.status, error)) {
+    // Request errors (400, 404, 413, 422, ...) say nothing about the account:
+    // codex surfaces them as-is, so neither cool the credential down nor rotate.
+    if (isFlexUnavailableReply(upstream.status, error) || !isRotatableStatus(upstream.status)) {
       return responseFromConsumedUpstream(upstream, body);
     }
     const usageErrorType = usageLimitErrorType(error.errorType, error.code);
@@ -227,9 +239,6 @@ export async function fetchCodexWithRotation(
     headers.delete("content-length");
     lastError = new Response(body, { status: upstream.status, headers });
     excluded.push(credential.id);
-    if (!isRotatableStatus(upstream.status)) {
-      return lastError;
-    }
   }
 
   return lastError ?? errorResponse(503, "no available codex credential", "credential_unavailable");
@@ -712,6 +721,17 @@ export function patchCompletedOutput(event: JsonObject, outputItems: OutputItem[
 // help: surface it without cooling the credential down or rotating.
 function isFlexUnavailableReply(status: number, error: UpstreamErrorSummary): boolean {
   return status === 429 && error.code === FLEX_UNAVAILABLE_CODE;
+}
+
+// Transport failures persisted through the same-account retries: the upstream
+// is unreachable, which another account will not fix and is not the account's
+// fault, so answer 502 instead of letting it surface as a 500 internal_error.
+function transportErrorResponse(error: unknown): Response {
+  if (!(error instanceof UpstreamTransportError)) {
+    throw error;
+  }
+  console.error(`${error.message} after ${error.attempts} attempts`);
+  return errorResponse(502, error.message, "upstream_unavailable");
 }
 
 function isRotatableStatus(status: number): boolean {

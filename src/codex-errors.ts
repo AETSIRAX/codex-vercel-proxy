@@ -85,13 +85,17 @@ export function responseStreamError(event: JsonObject): ResponseStreamError | un
     const code = stringValue(error?.code) ?? "response_failed";
     const errorType = stringValue(error?.type);
     const message = stringValue(error?.message) ?? "response.failed event received";
+    const status = responseErrorStatus(code, errorType);
     return {
       code,
       errorType,
       message,
-      status: responseErrorStatus(code, errorType),
+      status,
       retryAfterSeconds: RATE_LIMIT_ERROR_CODES.has(code) ? parseRetryAfterFromMessage(message) : undefined,
-      credentialFailure: true,
+      // Invalid-request failures (context_length_exceeded, invalid_prompt, the
+      // policy codes) are about the prompt, not the account
+      // (codex-api/src/sse/responses_error.rs), so they leave the credential be.
+      credentialFailure: status !== 400,
     };
   }
   const reason = incompleteResponseReason(event);

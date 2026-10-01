@@ -84,6 +84,18 @@ test("flex_unavailable is a terminal 429 that does not count against the credent
   assert.equal(responseStreamError({ type: "error", error: { code: "other" } }), undefined);
 });
 
+test("invalid-request response.failed codes do not count against the credential", () => {
+  for (const code of ["context_length_exceeded", "invalid_prompt", "cyber_policy"]) {
+    const error = responseStreamError({ type: "response.failed", response: { error: { code, message: "bad" } } });
+    assert.equal(error?.status, 400);
+    assert.equal(error?.credentialFailure, false);
+  }
+  for (const code of ["usage_limit_reached", "rate_limit_exceeded", "something_else"]) {
+    const error = responseStreamError({ type: "response.failed", response: { error: { code } } });
+    assert.equal(error?.credentialFailure, true);
+  }
+});
+
 test("interrupted incomplete responses complete the turn; other reasons are errors", () => {
   const interrupted = {
     type: "response.incomplete",
