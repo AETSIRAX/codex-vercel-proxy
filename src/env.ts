@@ -1,10 +1,11 @@
-import { stringValue } from "./utils.js";
+import { booleanValue, stringValue } from "./utils.js";
 
 export interface AppEnv {
   [key: string]: string | undefined;
   ADMIN_TOKEN?: string;
   CRED_ENCRYPTION_KEY?: string;
   CODEX_CLI_VERSION?: string;
+  CODEX_REQUEST_COMPRESSION?: string;
   CRON_SECRET?: string;
   DATABASE_URL?: string;
   FAILURE_COOLDOWN_SECONDS?: string;
@@ -39,6 +40,12 @@ export function proxyApiKeys(env: AppEnv): string[] {
     .split(/[,\n]+/)
     .map((key) => key.trim())
     .filter((key) => key !== "");
+}
+
+// Matches Codex CLI's enable_request_compression default for ChatGPT auth; set
+// CODEX_REQUEST_COMPRESSION=false to send plain JSON upstream.
+export function upstreamRequestCompression(env: AppEnv): boolean {
+  return booleanValue(env.CODEX_REQUEST_COMPRESSION) ?? true;
 }
 
 export function codexBaseURL(): string {

@@ -107,8 +107,11 @@ export class RequestBodyError extends Error {
 
 const IDENTITY_CONTENT_ENCODINGS = new Set(["", "identity"]);
 
-export async function readJsonObject(request: Request): Promise<JsonObject> {
-  const body = await readRequestBody(request);
+export async function readJsonObject(
+  request: Request,
+  maxDecodedBytes: number = MAX_DECODED_REQUEST_BODY_BYTES,
+): Promise<JsonObject> {
+  const body = await readRequestBody(request, maxDecodedBytes);
   let value: unknown;
   try {
     value = JSON.parse(body);
@@ -121,10 +124,15 @@ export async function readJsonObject(request: Request): Promise<JsonObject> {
   return value;
 }
 
+// Upper bound on a decompressed request body. Vercel caps the raw body at
+// 4.5 MB, but a compressed body can expand far beyond that; without a cap a
+// small zstd/gzip bomb would exhaust the function's memory.
+export const MAX_DECODED_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
+
 // Codex CLI compresses request bodies with zstd (enable_request_compression is
 // on by default for ChatGPT auth). Node's built-in zlib gained zstd in 22.15, so
 // decode here; on older runtimes tell the operator to disable the feature.
-async function readRequestBody(request: Request): Promise<string> {
+async function readRequestBody(request: Request, maxDecodedBytes: number): Promise<string> {
   const encoding = (request.headers.get("content-encoding") ?? "").trim().toLowerCase();
   if (IDENTITY_CONTENT_ENCODINGS.has(encoding)) {
     return request.text();
@@ -142,8 +150,15 @@ async function readRequestBody(request: Request): Promise<string> {
   }
   const compressed = new Uint8Array(await request.arrayBuffer());
   try {
-    return bytesToText(decompress(compressed));
+    return bytesToText(decompress(compressed, { maxOutputLength: maxDecodedBytes }));
   } catch (error) {
+    if (isBufferTooLargeError(error)) {
+      throw new RequestBodyError(
+        413,
+        "request_body_too_large",
+        `decoded ${encoding} request body exceeds ${maxDecodedBytes} bytes`,
+      );
+    }
     throw new RequestBodyError(
       400,
       "invalid_request_body",
@@ -152,23 +167,48 @@ async function readRequestBody(request: Request): Promise<string> {
   }
 }
 
-type BodyDecoder = (input: Uint8Array) => Uint8Array;
+type BodyDecoder = (input: Uint8Array, options: { maxOutputLength: number }) => Uint8Array;
 
 function requestBodyDecoder(encoding: string): BodyDecoder | undefined {
   switch (encoding) {
     case "zstd":
       // Accessed dynamically so the import still links on runtimes without zstd.
-      return typeof zlib.zstdDecompressSync === "function" ? (input) => zlib.zstdDecompressSync(input) : undefined;
+      return typeof zlib.zstdDecompressSync === "function"
+        ? (input, options) => zlib.zstdDecompressSync(input, options)
+        : undefined;
     case "gzip":
     case "x-gzip":
-      return (input) => zlib.gunzipSync(input);
+      return (input, options) => zlib.gunzipSync(input, options);
     case "deflate":
-      return (input) => zlib.inflateSync(input);
+      return (input, options) => zlib.inflateSync(input, options);
     case "br":
-      return (input) => zlib.brotliDecompressSync(input);
+      return (input, options) => zlib.brotliDecompressSync(input, options);
     default:
       return undefined;
   }
+}
+
+function isBufferTooLargeError(error: unknown): boolean {
+  return error instanceof RangeError && (error as { code?: unknown }).code === "ERR_BUFFER_TOO_LARGE";
+}
+
+export interface EncodedJsonBody {
+  body: string | Uint8Array<ArrayBuffer>;
+  contentEncoding?: "zstd";
+}
+
+// Codex CLI zstd-compresses /responses bodies at level 3 when talking to the
+// ChatGPT backend (codex-rs http-client request.rs). Fall back to plain JSON
+// when disabled or when the runtime has no zstd.
+export function encodeJsonRequestBody(value: unknown, compress: boolean): EncodedJsonBody {
+  const json = JSON.stringify(value);
+  if (!compress || typeof zlib.zstdCompressSync !== "function") {
+    return { body: json };
+  }
+  const compressed = zlib.zstdCompressSync(json, {
+    params: { [zlib.constants.ZSTD_c_compressionLevel]: 3 },
+  });
+  return { body: new Uint8Array(compressed), contentEncoding: "zstd" };
 }
 
 export async function sha256Hex(input: string): Promise<string> {

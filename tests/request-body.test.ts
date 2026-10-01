@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as zlib from "node:zlib";
 
-import { readJsonObject, RequestBodyError } from "../src/utils.js";
+import { encodeJsonRequestBody, readJsonObject, RequestBodyError } from "../src/utils.js";
 
 const body = { model: "gpt-6-astra", input: "hi" };
 
@@ -63,4 +63,38 @@ test("unknown content encodings map to 415", async () => {
     assert.equal(error.code, "unsupported_content_encoding");
     return true;
   });
+});
+
+const zstdSkip = typeof zlib.zstdCompressSync !== "function" ? "node:zlib has no zstd on this runtime" : false;
+
+test("decompressed bodies over the cap map to 413", async () => {
+  const bomb = JSON.stringify({ input: "a".repeat(64 * 1024) });
+  const gzip = new Uint8Array(zlib.gzipSync(bomb));
+  await assert.rejects(readJsonObject(request(gzip, "gzip"), 1024), (error: unknown) => {
+    assert.ok(error instanceof RequestBodyError);
+    assert.equal(error.status, 413);
+    assert.equal(error.code, "request_body_too_large");
+    return true;
+  });
+  assert.deepEqual(await readJsonObject(request(gzip, "gzip"), bomb.length), JSON.parse(bomb));
+});
+
+test("zstd bodies over the cap map to 413", { skip: zstdSkip }, async () => {
+  const compressed = new Uint8Array(zlib.zstdCompressSync(JSON.stringify({ input: "a".repeat(64 * 1024) })));
+  await assert.rejects(readJsonObject(request(compressed, "zstd"), 1024), (error: unknown) => {
+    assert.ok(error instanceof RequestBodyError);
+    assert.equal(error.status, 413);
+    return true;
+  });
+});
+
+test("upstream bodies are zstd encoded when enabled", { skip: zstdSkip }, () => {
+  const encoded = encodeJsonRequestBody(body, true);
+  assert.equal(encoded.contentEncoding, "zstd");
+  assert.ok(encoded.body instanceof Uint8Array);
+  assert.deepEqual(JSON.parse(zlib.zstdDecompressSync(encoded.body).toString("utf8")), body);
+});
+
+test("upstream bodies stay plain JSON when compression is disabled", () => {
+  assert.deepEqual(encodeJsonRequestBody(body, false), { body: JSON.stringify(body) });
 });

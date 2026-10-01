@@ -96,6 +96,7 @@ Codex upstream / Postgres
 | `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5` |
 | `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 Codex CLI 版本，默认 `0.159.2`（`gpt-6-sol`、`gpt-6-luna` 要求 0.155.0 及以上） |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
+| `CODEX_REQUEST_COMPRESSION` | 否 | 是否像 Codex CLI 一样用 zstd（level 3）压缩发往上游 `/responses` 的请求体，默认 `true`；设为 `false` 时发送明文 JSON |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
 | `REFRESH_MIN_INTERVAL_SECONDS` | 否 | 强制刷新最小间隔，默认 `300` |
 | `FAILURE_COOLDOWN_SECONDS` | 否 | 凭证失败后的通用冷却时间，默认 `300`；usage limit 命中或配额剩余低于 10% 时优先使用上游配额重置时间 |
@@ -337,7 +338,9 @@ OpenAI 的 `refresh_token` 是一次性 token。刷新成功后，服务会把�
 
 ### 请求体压缩
 
-Codex CLI 默认开启 `enable_request_compression`，用 zstd 压缩 `/v1/responses` 请求体。代理使用 Node.js 内置 `zlib` 解压 `Content-Encoding: zstd`（需要 Node.js 22.15+，Vercel 的 Node 22 运行时满足），同时支持 `gzip`、`deflate`、`br`。运行时缺少 zstd 支持时返回 `415 unsupported_content_encoding`，请在 Codex 配置中设置 `enable_request_compression = false` 或升级运行时。
+Codex CLI 默认开启 `enable_request_compression`，用 zstd 压缩 `/v1/responses` 请求体。代理使用 Node.js 内置 `zlib` 解压 `Content-Encoding: zstd`（需要 Node.js 22.15+，Vercel 的 Node 22 运行时满足），同时支持 `gzip`、`deflate`、`br`。运行时缺少 zstd 支持时返回 `415 unsupported_content_encoding`，请在 Codex 配置中设置 `enable_request_compression = false` 或升级运行时。解压后的请求体上限为 64 MiB，超出时返回 `413 request_body_too_large`，防止压缩炸弹耗尽函数内存。
+
+发往上游 `/responses` 的请求体与 Codex CLI（ChatGPT 登录）一致，使用 zstd level 3 压缩并带 `Content-Encoding: zstd`，无论客户端原本是否压缩。设置 `CODEX_REQUEST_COMPRESSION=false` 或运行时缺少 zstd 时改为发送明文 JSON。其他 Codex 扩展端点与 Codex CLI 一样不压缩。
 
 ## Prompt Caching
 

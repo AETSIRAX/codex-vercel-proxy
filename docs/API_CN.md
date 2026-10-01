@@ -264,7 +264,7 @@ user
 - `x-codex-routing-hint`：客户端显式传入时透传；否则按 `model=<slug>[;tier=<service_tier>]` 生成（`x-codex-guardian: reviewer` 请求不生成）。
 - `X-OpenAI-Fedramp: true`：凭证 id_token 标记为 FedRAMP 账号时附加。
 - `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-codex-guardian`：存在时透传给上游。
-- 请求体 `Content-Encoding`：支持 `zstd`（Codex CLI 默认压缩方式，需要 Node.js 22.15+）、`gzip`、`deflate`、`br`；无法解压时返回 `415 unsupported_content_encoding`，请求体损坏或不是 JSON 对象时返回 `400 invalid_request_body`。
+- 请求体 `Content-Encoding`：支持 `zstd`（Codex CLI 默认压缩方式，需要 Node.js 22.15+）、`gzip`、`deflate`、`br`；无法解压时返回 `415 unsupported_content_encoding`，请求体损坏或不是 JSON 对象时返回 `400 invalid_request_body`，解压后超过 64 MiB 时返回 `413 request_body_too_large`。
 - 上游响应头 `x-codex-turn-state`、`openai-model`、`x-reasoning-included`、`x-models-etag`、`x-request-id`、`x-codex-promo-message`、`x-codex-active-limit`、`x-codex-rate-limit-reached-type` 会原样返回给客户端。
 多凭据场景下，服务会按 Codex 会话头选择 Codex 凭据。粘连键只来自 `session-id`，没有该头时使用 `thread-id`；没有这两个请求头时保留原有按 `last_used_at` 选择凭据的行为。同一粘连键通常会落到同一凭据，凭据不可用或上游返回可轮换错误时才切换备用凭据。
 

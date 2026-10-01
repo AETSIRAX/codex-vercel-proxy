@@ -279,7 +279,8 @@ Responses 入口会在转发前执行以下处理：
 - `x-codex-routing-hint` 显式传入时透传；否则按 `model=<slug>[;tier=<service_tier>]` 生成（Guardian reviewer 请求不生成）
 - 凭证 id_token 标记 `chatgpt_account_is_fedramp` 时附加 `X-OpenAI-Fedramp: true`
 - `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-codex-guardian`、`x-openai-internal-codex-responses-lite` 存在时透传；Responses Lite 模型固定携带 `x-openai-internal-codex-responses-lite: true`
-- 请求体 `Content-Encoding: zstd`（Codex CLI 默认）、`gzip`、`deflate`、`br` 由 `readJsonObject()` 用 Node 内置 `zlib` 解压；运行时缺少 zstd（Node < 22.15）时返回 `415 unsupported_content_encoding`
+- 请求体 `Content-Encoding: zstd`（Codex CLI 默认）、`gzip`、`deflate`、`br` 由 `readJsonObject()` 用 Node 内置 `zlib` 解压；运行时缺少 zstd（Node < 22.15）时返回 `415 unsupported_content_encoding`；解压输出受 `MAX_DECODED_REQUEST_BODY_BYTES`（64 MiB）限制，超出返回 `413 request_body_too_large`
+- 发往上游 `/responses` 的请求体由 `encodeJsonRequestBody()` 按 Codex CLI 方式用 zstd level 3 压缩并设置 `Content-Encoding: zstd`，每次请求只编码一次、凭据轮换时复用；`CODEX_REQUEST_COMPRESSION=false` 或运行时缺少 zstd 时发送明文
 - 上游响应头 `x-codex-turn-state`、`openai-model`、`x-reasoning-included`、`x-models-etag`、`x-request-id`、`x-codex-promo-message`、`x-codex-active-limit`、`x-codex-rate-limit-reached-type` 原样返回；上游 `response.failed` 事件按 `src/codex-errors.ts` 映射为 `400`/`429`/`503`/`502`，`rate_limit_exceeded` 会从消息解析 `Retry-After`
 
 Chat Completions 入口会先转成 Responses：

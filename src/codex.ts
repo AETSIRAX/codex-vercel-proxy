@@ -12,7 +12,7 @@ import {
   isGuardianReviewerRequest,
   type CodexJsonEndpointPath,
 } from "./codex-endpoint.js";
-import { codexBaseURL } from "./env.js";
+import { codexBaseURL, upstreamRequestCompression } from "./env.js";
 import type { AppEnv } from "./env.js";
 import {
   FLEX_UNAVAILABLE_CODE,
@@ -29,6 +29,8 @@ import type { JsonObject, JsonValue, SelectedCredential } from "./types.js";
 import { createUsageContext, scheduleUsageRecord, type UsageContext } from "./usage.js";
 import {
   contentStringValue,
+  encodeJsonRequestBody,
+  type EncodedJsonBody,
   errorResponse,
   isRecord,
   jsonResponse,
@@ -179,6 +181,8 @@ export async function fetchCodexWithRotation(
   const excluded: string[] = [];
   let lastError: Response | undefined;
   const affinityKey = resolveCodexCredentialAffinityKey(request);
+  // Encode once: every rotation attempt resends the same payload.
+  const requestBody = encodeJsonRequestBody(payload, upstreamRequestCompression(env));
 
   for (let attempt = 0; attempt < MAX_CREDENTIAL_ATTEMPTS; attempt += 1) {
     let selected: SelectedCredential | null;
@@ -192,7 +196,7 @@ export async function fetchCodexWithRotation(
     }
 
     const { response: upstream, credential } = await fetchWithUnauthorizedRecovery(manager, selected, (candidate) =>
-      fetchCodexOnce(request, env, candidate, payload, stream, identity),
+      fetchCodexOnce(request, env, candidate, payload, requestBody, stream, identity),
     );
     if (upstream.ok) {
       // Success is recorded by the stream consumers once response.completed
@@ -240,6 +244,7 @@ async function fetchCodexOnce(
   env: AppEnv,
   credential: SelectedCredential,
   payload: JsonObject,
+  body: EncodedJsonBody,
   stream: boolean,
   identity: RequestIdentity,
 ): Promise<Response> {
@@ -261,10 +266,13 @@ async function fetchCodexOnce(
   headers.set("originator", request.headers.get("originator")?.trim() || "codex_cli_rs");
   headers.set("session-id", identity.sessionId);
   headers.set("thread-id", identity.threadId);
+  if (body.contentEncoding !== undefined) {
+    headers.set("Content-Encoding", body.contentEncoding);
+  }
   return fetch(`${baseURL}/responses`, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: body.body,
   });
 }
 
