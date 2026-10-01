@@ -62,7 +62,7 @@ vercel.json                  Vercel Functions、Cron、rewrite 配置
 | `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5` |
 | `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 CLI 版本，默认 `0.159.2` |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
-| `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
+| `REFRESH_LEAD_SECONDS` | 否 | access token 到期前多少秒触发刷新，默认 `300`（与 Codex 一致）；access token 没有 `exp` 时按上次刷新超过 8 天触发 |
 | `REFRESH_MIN_INTERVAL_SECONDS` | 否 | 强制刷新最小间隔，默认 `300` |
 | `FAILURE_COOLDOWN_SECONDS` | 否 | 凭证失败后的通用冷却时间，默认 `300`；usage limit 命中或配额剩余低于 10% 时优先使用上游配额重置时间 |
 | `REFRESH_LOCK_SECONDS` | 否 | 单条凭证刷新锁时间，默认 `120` |
@@ -78,7 +78,7 @@ CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
 MODELS=gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5
 CODEX_CLI_VERSION=0.159.2
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
-REFRESH_LEAD_SECONDS=172800
+REFRESH_LEAD_SECONDS=300
 REFRESH_MIN_INTERVAL_SECONDS=300
 FAILURE_COOLDOWN_SECONDS=300
 REFRESH_LOCK_SECONDS=120

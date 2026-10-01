@@ -1,4 +1,5 @@
 import { parseJwtIdentity } from "./jwt.js";
+import { tokenExpiresAt } from "./token-refresh.js";
 import { base64UrlEncode, isRecord, numberValue, stringValue, textToBytes } from "./utils.js";
 
 // Codex CLI OAuth client. The same public client id is used for token refresh in
@@ -201,10 +202,7 @@ async function exchangeCode(code: string, codeVerifier: string): Promise<TokenRe
 function toResult(token: TokenResponse): CodexOAuthResult {
   const identity = parseJwtIdentity(token.id_token);
   const now = Date.now();
-  const expiresAt =
-    token.expires_in !== undefined
-      ? new Date(now + token.expires_in * 1000).toISOString()
-      : identity.expiresAt;
+  const expiresAt = tokenExpiresAt(token.access_token, token.expires_in, now);
   return {
     credential: {
       access_token: token.access_token,

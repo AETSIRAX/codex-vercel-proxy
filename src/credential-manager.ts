@@ -3,13 +3,20 @@ import { rankCredentialIdsByAffinity } from "./codex-affinity.js";
 import { decryptJson, encryptJson } from "./crypto.js";
 import { database, type Sql } from "./db.js";
 import { envString, type AppEnv } from "./env.js";
-import { parseJwtIdentity } from "./jwt.js";
+import { parseJwtExpiration, parseJwtIdentity } from "./jwt.js";
 import {
   fetchCredentialRateLimits,
   isUsageLimitErrorType,
   nextResetMillisFromRateLimits,
   normalizeRateLimitSnapshots,
 } from "./rate-limits.js";
+import {
+  accessTokenExpiresAt,
+  applyTokenRefresh,
+  DEFAULT_REFRESH_LEAD_SECONDS,
+  parseTokenRefreshResponse,
+  shouldRefreshCredential,
+} from "./token-refresh.js";
 import type {
   CredentialRefreshSummary,
   CredentialImportResult,
@@ -740,7 +747,7 @@ export class CredentialManager {
         tokenType,
         accountId: resolvedAccountId,
         email: resolvedEmail,
-        expiresAt: expiresAt ?? identity.expiresAt,
+        expiresAt: parseJwtExpiration(accessToken) ?? expiresAt,
         lastRefresh,
         planType: identity.planType,
         userId: identity.userId,
@@ -759,7 +766,7 @@ export class CredentialManager {
 
   private statusFromRow(row: CredentialRow, credential: PrivateCredential): CredentialStatus {
     const now = Date.now();
-    const expiresAt = parseTime(credential.expiresAt);
+    const expiresAt = accessTokenExpiresAt(credential);
     let status: CredentialStatus["status"] = "available";
     if (row.disabled) {
       status = "disabled";
@@ -793,25 +800,12 @@ export class CredentialManager {
     };
   }
 
-  private shouldRefresh(credential: PrivateCredential, enforceExpired: boolean): boolean {
-    if (!credential.accessToken && credential.refreshToken) {
-      return true;
-    }
-    const expiresAt = parseTime(credential.expiresAt);
-    if (expiresAt === undefined) {
-      return false;
-    }
-    const now = Date.now();
-    if (expiresAt <= now) {
-      return credential.refreshToken !== undefined;
-    }
-    if (enforceExpired) {
-      const lastRefresh = parseTime(credential.lastRefresh);
-      if (lastRefresh !== undefined && now - lastRefresh < this.refreshMinIntervalSeconds() * 1000) {
-        return false;
-      }
-    }
-    return expiresAt - now <= this.refreshLeadSeconds() * 1000 && credential.refreshToken !== undefined;
+  private shouldRefresh(credential: PrivateCredential, enforceMinInterval: boolean): boolean {
+    return shouldRefreshCredential(credential, {
+      now: Date.now(),
+      leadMs: this.refreshLeadSeconds() * 1000,
+      minIntervalMs: enforceMinInterval ? this.refreshMinIntervalSeconds() * 1000 : undefined,
+    });
   }
 
   private async refreshAndStore(
@@ -869,25 +863,8 @@ export class CredentialManager {
         return { credential: current, refreshed: false };
       }
       const refreshed = await this.refreshWithOpenAI(current.refreshToken);
-      const identity = parseJwtIdentity(refreshed.id_token);
       const refreshedAt = Date.now();
-      const next: PrivateCredential = {
-        ...current,
-        accessToken: refreshed.access_token,
-        refreshToken: refreshed.refresh_token,
-        idToken: refreshed.id_token ?? current.idToken,
-        tokenType: refreshed.token_type ?? current.tokenType,
-        accountId: identity.accountId ?? current.accountId,
-        email: identity.email ?? current.email,
-        planType: identity.planType ?? current.planType,
-        userId: identity.userId ?? current.userId,
-        fedramp: identity.fedramp ?? current.fedramp,
-        expiresAt:
-          refreshed.expires_in !== undefined
-            ? new Date(refreshedAt + refreshed.expires_in * 1000).toISOString()
-            : identity.expiresAt ?? current.expiresAt,
-        lastRefresh: new Date(refreshedAt).toISOString(),
-      };
+      const next = applyTokenRefresh(current, refreshed, refreshedAt);
       await this.sql`
         UPDATE credentials
            SET encrypted_json = ${await this.encryptCredential(next)},
@@ -925,21 +902,7 @@ export class CredentialManager {
     if (!response.ok) {
       throw new TokenRefreshError(response.status, body, parseRefreshErrorCode(body));
     }
-    const value: unknown = JSON.parse(body);
-    if (!isRecord(value) || typeof value.access_token !== "string") {
-      throw new Error("token refresh response did not include access_token");
-    }
-    const newRefreshToken = stringValue(value.refresh_token);
-    if (!newRefreshToken) {
-      throw new Error("token refresh response did not include refresh_token");
-    }
-    return {
-      access_token: value.access_token,
-      refresh_token: newRefreshToken,
-      id_token: stringValue(value.id_token),
-      token_type: stringValue(value.token_type),
-      expires_in: numberValue(value.expires_in),
-    };
+    return parseTokenRefreshResponse(body);
   }
 
   private async markPermanentRefreshFailure(id: string, message: string): Promise<void> {
@@ -1040,7 +1003,7 @@ export class CredentialManager {
   }
 
   private refreshLeadSeconds(): number {
-    return numberValue(this.env.REFRESH_LEAD_SECONDS) ?? 2 * 24 * 60 * 60;
+    return numberValue(this.env.REFRESH_LEAD_SECONDS) ?? DEFAULT_REFRESH_LEAD_SECONDS;
   }
 
   private refreshMinIntervalSeconds(): number {
