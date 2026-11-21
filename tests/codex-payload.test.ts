@@ -102,14 +102,40 @@ test("responses lite prefix items get stable ids derived from the thread id", as
   assert.notEqual((other.input as JsonObject[])[1].id, messageId);
 });
 
-test("responses lite payload without tools still sends an empty additional_tools item", async () => {
-  const payload = await prepareCodexPayload({ model: "gpt-5.6-sol", input: "hi" }, true, settings);
+test("responses lite payload without tools omits additional_tools and keeps developer instructions", async () => {
+  const payload = await prepareCodexPayload(
+    { model: "gpt-6.2-sol", input: "hi", tools: [], instructions: "be brief" },
+    true,
+    settings,
+    { threadId: "thread-a" },
+  );
 
   const input = payload.input as JsonObject[];
   assert.equal(input.length, 2);
-  assert.deepEqual(input[0], { type: "additional_tools", role: "developer", tools: [] });
-  assert.equal(input[1].type, "message");
+  assert.equal(input[0].type, "message");
+  assert.equal(input[0].role, "developer");
+  assert.match(String(input[0].id), /^msg_/);
+  assert.equal(input[1].role, "user");
+  assert.equal("instructions" in payload, false);
   assert.equal("tools" in payload, false);
+});
+
+test("tool-free native lite input retains its existing prefix and compaction trigger", async () => {
+  const input: JsonObject[] = [
+    { type: "message", id: "msg_prefix", role: "developer", content: [{ type: "input_text", text: "be brief" }] },
+    { type: "compaction_trigger" },
+  ];
+  const payload = await prepareCodexPayload(
+    { model: "gpt-6.2-sol", input, prompt_cache_key: null },
+    true,
+    settings,
+    { threadId: "thread-a", promptCacheKey: "resolved-key" },
+  );
+
+  assert.deepEqual(payload.input, input);
+  assert.equal(payload.prompt_cache_key, null);
+  assert.equal("tools" in payload, false);
+  assert.equal("instructions" in payload, false);
 });
 
 test("responses lite payload keeps lite-aware client input untouched", async () => {
@@ -375,6 +401,16 @@ test("non-lite models keep the existing payload shape", async () => {
   assert.equal((payload.input as JsonObject[]).length, 1);
 });
 
+test("responses preserves an explicit choice to disable parallel tool calls", async () => {
+  const payload = await prepareCodexPayload(
+    { model: "gpt-5.5", input: "hi", parallel_tool_calls: false },
+    true,
+    settings,
+  );
+
+  assert.equal(payload.parallel_tool_calls, false);
+});
+
 test("responses lite strips image detail from messages and tool outputs", async () => {
   const payload = await prepareCodexPayload(
     {
@@ -401,8 +437,7 @@ test("responses lite strips image detail from messages and tool outputs", async 
     settings,
   );
 
-  // The additional_tools prefix item is inserted first.
-  const input = (payload.input as JsonObject[]).slice(1);
+  const input = payload.input as JsonObject[];
   assert.equal("detail" in ((input[0].content as JsonObject[])[0] as JsonObject), false);
   assert.equal("detail" in ((input[1].output as JsonObject[])[0] as JsonObject), false);
   assert.equal("detail" in ((input[2].output as JsonObject[])[0] as JsonObject), false);

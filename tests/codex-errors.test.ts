@@ -7,6 +7,7 @@ import {
   responseErrorStatus,
   responseMetadataHeaders,
   responseStreamError,
+  streamErrorResponse,
 } from "../src/codex-errors.js";
 
 test("response.failed codes map to the statuses codex uses", () => {
@@ -60,6 +61,44 @@ test("response.failed stream errors carry the parsed retry delay", () => {
   });
   assert.equal(overloaded?.status, 503);
   assert.equal(overloaded?.retryAfterSeconds, undefined);
+  assert.equal(overloaded?.credentialFailure, false);
+});
+
+test("typed stream errors retain their code without recording a credential failure", () => {
+  const notFound = responseStreamError({
+    type: "error",
+    error: { code: "model_not_found", message: "Unknown model." },
+  });
+  assert.equal(notFound?.code, "model_not_found");
+  assert.equal(notFound?.message, "Unknown model.");
+  assert.equal(notFound?.status, 404);
+  assert.equal(notFound?.credentialFailure, false);
+
+  const denied = responseStreamError({ type: "error", code: "inference_hook_denied", message: "Request denied." });
+  assert.equal(denied?.status, 403);
+  assert.equal(denied?.credentialFailure, false);
+
+  assert.equal(responseStreamError({ type: "error", code: "unknown_event" }), undefined);
+});
+
+test("capacity retry advice is exposed on the aggregated response", () => {
+  const event = {
+    type: "response.failed",
+    response: { error: { code: "policy_capacity_unavailable", headers: { "Retry-After": 12 } } },
+  };
+  const error = responseStreamError(event, new Headers({ "retry-after": "30" }));
+  assert.ok(error);
+  assert.equal(error.code, "policy_capacity_unavailable");
+  assert.equal(error.status, 503);
+  assert.equal(error.credentialFailure, false);
+  assert.equal(streamErrorResponse(error).headers.get("retry-after"), "12");
+
+  const fallback = responseStreamError(
+    { type: "error", error: { code: "server_is_overloaded" } },
+    new Headers({ "retry-after": "0" }),
+  );
+  assert.ok(fallback);
+  assert.equal(streamErrorResponse(fallback).headers.get("retry-after"), "0");
 });
 
 test("flex_unavailable is a terminal 429 that does not count against the credential", () => {
@@ -104,11 +143,6 @@ test("interrupted incomplete responses complete the turn; other reasons are erro
   assert.equal(error?.message, "Incomplete response returned, reason: max_output_tokens");
   // An incomplete response is not an account problem, so no cooldown.
   assert.equal(error?.credentialFailure, false);
-  assert.equal(
-    responseStreamError({ type: "response.failed", response: { error: { code: "server_is_overloaded" } } })
-      ?.credentialFailure,
-    true,
-  );
 });
 
 test("aggregated replies surface the response headers codex reads", () => {

@@ -11,6 +11,7 @@ import {
   responseMetadataHeaders,
   responseObject,
   responseStreamError,
+  streamErrorResponse,
   sseResponseHeaders,
   STREAM_TRUNCATED_MESSAGE,
   type OutputItem,
@@ -85,7 +86,7 @@ export async function proxyChatCompletions(request: Request, env: AppEnv, input:
         collectOutputItem(parsed, outputItems);
       }
       if (parsed) {
-        const streamError = responseStreamError(parsed);
+        const streamError = responseStreamError(parsed, upstream.response.headers);
         if (streamError) {
           await reportResponseStreamError(env, upstream.credential, upstream.response, streamError);
           scheduleUsageRecord(env, usageContext, {
@@ -93,7 +94,7 @@ export async function proxyChatCompletions(request: Request, env: AppEnv, input:
             statusCode: streamError.status,
             errorCode: streamError.code,
           });
-          return errorResponse(streamError.status, streamError.message, streamError.code);
+          return streamErrorResponse(streamError);
         }
       }
       if (parsed && isResponseCompletionEvent(parsed)) {
@@ -178,7 +179,7 @@ function chatToResponses(input: JsonObject, originalToolNameMap: Map<string, str
     input: responseInput,
     instructions: "",
     stream: input.stream === true,
-    parallel_tool_calls: true,
+    parallel_tool_calls: input.parallel_tool_calls !== false,
     store: false,
   };
   const reasoning = chatReasoning(input, isResponsesLiteModel(modelName));
@@ -621,8 +622,8 @@ async function streamChat(
       const delta = (payload: JsonObject, finishReason: string | null = null): void => {
         push(chatDelta(id, created, modelName, payload, finishReason));
       };
-      const fail = (message: string, code: string): void => {
-        push(chatError(message, code));
+      const fail = (message: string, code: string, retryAfterSeconds?: number): void => {
+        push(chatError(message, code, retryAfterSeconds));
         push("[DONE]");
       };
       const toolCalls = new ToolCallTracker();
@@ -641,7 +642,7 @@ async function streamChat(
             continue;
           }
           collectOutputItem(parsed, outputItems);
-          const streamError = responseStreamError(parsed);
+          const streamError = responseStreamError(parsed, response.headers);
           if (streamError) {
             terminalErrorSeen = true;
             await reportResponseStreamError(env, credential, response, streamError);
@@ -650,7 +651,7 @@ async function streamChat(
               statusCode: streamError.status,
               errorCode: streamError.code,
             });
-            fail(streamError.message, streamError.code);
+            fail(streamError.message, streamError.code, streamError.retryAfterSeconds);
             break;
           }
           if (parsed.type === "response.reasoning_summary_text.delta") {
@@ -843,12 +844,10 @@ function chatUsage(response: JsonValue): JsonObject {
   return usageOut;
 }
 
-function chatError(message: string, code: string): JsonObject {
-  return {
-    error: {
-      message,
-      type: "upstream_error",
-      code,
-    },
-  };
+function chatError(message: string, code: string, retryAfterSeconds?: number): JsonObject {
+  const error: JsonObject = { message, type: "upstream_error", code };
+  if (retryAfterSeconds !== undefined) {
+    error.retry_after = retryAfterSeconds;
+  }
+  return { error };
 }

@@ -59,8 +59,8 @@ vercel.json                  Vercel Functions、Cron、rewrite 配置
 | `ADMIN_TOKEN` | 首次初始化 | `/admin/*` 管理接口访问密钥，后续可在控制面板更新 |
 | `CRON_SECRET` | 是 | `/cron/refresh` 和 `/cron/cleanup` 定时任务密钥 |
 | `CRED_ENCRYPTION_KEY` | 是 | 凭证加密密钥，建议使用长随机字符串 |
-| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5` |
-| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 CLI 版本，默认 `0.159.2` |
+| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6.2-sol,gpt-6.2-astra,gpt-6.1-terra,gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5` |
+| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 CLI 版本，默认 `0.170.0` |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
 | `REFRESH_MIN_INTERVAL_SECONDS` | 否 | 强制刷新最小间隔，默认 `300` |
@@ -75,8 +75,8 @@ PROXY_API_KEY=replace-with-local-proxy-key
 ADMIN_TOKEN=replace-with-local-admin-token
 CRON_SECRET=replace-with-local-cron-secret
 CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
-MODELS=gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5
-CODEX_CLI_VERSION=0.159.2
+MODELS=gpt-6.2-sol,gpt-6.2-astra,gpt-6.1-terra,gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5
+CODEX_CLI_VERSION=0.170.0
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
 REFRESH_LEAD_SECONDS=172800
 REFRESH_MIN_INTERVAL_SECONDS=300
@@ -234,7 +234,7 @@ OpenAI 的 `refresh_token` 是一次性的。刷新成功后，上游会返回�
 COALESCE(last_used_at, 0) ASC, failure_count ASC, created_at ASC
 ```
 
-上游返回以下状态时会尝试切换凭证：
+上游返回以下状态时可能尝试切换凭证。已识别的请求、模型和容量错误直接返回。
 
 ```text
 401, 403, 429, 5xx
@@ -242,7 +242,7 @@ COALESCE(last_used_at, 0) ASC, failure_count ASC, created_at ASC
 
 其中 `401` 会先像 Codex CLI 一样强制刷新当前凭证 token 并用同一凭证重试一次（`CredentialManager.recoverUnauthorized()`），仍失败才切换凭证。恢复时先重读数据库：其他实例已经换过 token 就直接复用；其他实例正持有刷新锁则最多等待 5 秒读取其结果，锁竞争不算刷新失败。失败路径（`markFailure`）不再清空 `refresh_lock_until`，只有刷新流程自己管理这把锁。
 
-凭证成功计数在流式和非流式路径都只在收到 `response.completed` 后写入（与 Codex 一样，`incomplete_details.reason` 为 `interrupted` 的 `response.incomplete` 也视为正常结束），HTTP 200 但中途断流按 502 记失败。其他原因的 `response.incomplete` 按 502 `response_incomplete` 返回，但不计入凭证失败。`flex_unavailable`（HTTP 429 或流内 `error`/`response.failed` 事件）是 Flex 容量不足，与账号无关：代理直接返回 429，不冷却凭证，也不轮换。上游在终态事件前 EOF 时，代理向客户端补发一个 `{"type":"error","code":"bad_upstream_response"}` 事件（Chat 为 error chunk 加 `[DONE]`）再结束流。客户端主动断开会触发流的 `cancel()`，代理随即取消上游读取，不记凭证失败，用量按状态 `499`、错误码 `client_cancelled` 记录。所有可用凭证耗尽时返回最后一次真实的上游错误（例如 429 与其 `Retry-After`），只有一开始就没有凭证才返回 `503 credential_unavailable`。刷新接口返回 `401`、`400 invalid_grant` 或 `refresh_token_expired`、`refresh_token_reused`、`refresh_token_invalidated` 时视为永久失败并停用凭证。
+凭证成功计数在流式和非流式路径都只在收到 `response.completed` 后写入（与 Codex 一样，`incomplete_details.reason` 为 `interrupted` 的 `response.incomplete` 也视为正常结束），HTTP 200 但中途断流按 502 记失败。其他原因的 `response.incomplete` 按 502 `response_incomplete` 返回，但不计入凭证失败。流内 `error` 和 `response.failed` 也识别模型、请求和容量错误。聚合客户端收到对应的 HTTP 状态及可用的 `Retry-After`。上游在终态事件前 EOF 时，代理向客户端补发一个 `{"type":"error","code":"bad_upstream_response"}` 事件（Chat 为 error chunk 加 `[DONE]`）再结束流。客户端主动断开会触发流的 `cancel()`，代理随即取消上游读取，不记凭证失败，用量按状态 `499`、错误码 `client_cancelled` 记录。所有可用凭证耗尽时返回最后一次真实的上游错误（例如 429 与其 `Retry-After`），只有一开始就没有凭证才返回 `503 credential_unavailable`。刷新接口返回 `401`、`400 invalid_grant` 或 `refresh_token_expired`、`refresh_token_reused`、`refresh_token_invalidated` 时视为永久失败并停用凭证。
 
 单次请求最多尝试 8 条凭证。失败凭证会写入 `last_error`、增加 `failure_count`，并设置 `next_retry_at`。如果上游返回 `HTTP 429: The usage limit has been reached`，或成功请求后的配额快照显示任意窗口剩余额度低于 10%，服务会读取这些窗口的未来 `reset_at`；多个窗口同时低于 10% 时取更晚的重置时间。没有可用重置时间时，失败路径退回 `Retry-After` 或 `FAILURE_COOLDOWN_SECONDS`。主动低余额冷却不增加 `failure_count`。
 
@@ -253,7 +253,7 @@ Responses 入口会在转发前执行以下处理：
 - `input` 为字符串时转成 user message
 - 强制 `stream=true`
 - 强制 `store=false`
-- 强制 `parallel_tool_calls=true`（Responses Lite 模型除外，见下）
+- 普通模型的 `parallel_tool_calls` 缺省为 `true`，保留显式 `false`。Responses Lite 固定为 `false`。
 - 总是追加 `include` 项 `reasoning.encrypted_content`，其他 include 值保留
 - 删除 `previous_response_id`、`prompt_cache_retention`、`safety_identifier`
 - 删除 `max_output_tokens`、`max_completion_tokens`、`max_tokens`、`temperature`、`top_p`
@@ -264,9 +264,9 @@ Responses 入口会在转发前执行以下处理：
 - `instructions` 缺失或为 `null` 时改为空字符串
 - `reasoning.effort="ultra"` 按模型目录映射（`reasoningEffortForRequest()`）：取该模型的 `multi_agent_reasoning_effort`，没有则 `max`，仍不支持则该模型最高的非 ultra 等级；`persistent` 映射为 `disabled`
 - `stream_options` 只保留 `reasoning_summary_delivery="sequential_cutoff"`，其他值和额外字段删除
-- Responses Lite 模型（模型目录标记 `useResponsesLite`，或 `gpt-6`、`gpt-5.6`、`gpt-daybreak`、`codex-auto-review` 前缀）额外处理：`parallel_tool_calls` 固定为 `false`；`reasoning.context` 缺省时补为 `all_turns`；`input` 中没有 `additional_tools` 项时，按 Codex `create_tools_json_for_responses_lite` 的规则把 `function`、`custom` 工具包进 `{type:"namespace",name:"functions"}`（位于第一个函数工具的位置，客户端自带的 `functions` namespace 会被合并），其他工具保持原序，全部工具组成一个 `additional_tools` 项（无工具时 `tools: []`）前置到 `input`；非空 `instructions` 转成紧随其后的 developer message；两者带稳定 id `at_<uuidv5>`、`msg_<uuidv5>`，命名空间为 `uuidv5(OID, thread-id)`，name 分别为工具列表 JSON 和指令文本；顶层 `tools`、`instructions` 删除。已发送 `additional_tools` 项的 lite-aware 客户端输入保持原样
+- Responses Lite 模型（模型目录标记 `useResponsesLite`，或 `gpt-6`、`gpt-5.6`、`gpt-daybreak`、`codex-auto-review` 前缀）额外处理：`parallel_tool_calls` 固定为 `false`；`reasoning.context` 缺省时补为 `all_turns`；`input` 中没有 `additional_tools` 项时，按 Codex `create_tools_json_for_responses_lite` 的规则把 `function`、`custom` 工具包进 `{type:"namespace",name:"functions"}`（位于第一个函数工具的位置，客户端自带的 `functions` namespace 会被合并），其他工具保持原序，有工具时将列表作为 `additional_tools` 项前置到 `input`；非空 `instructions` 转成紧随其后的 developer message；两者带稳定 id `at_<uuidv5>`、`msg_<uuidv5>`，命名空间为 `uuidv5(OID, thread-id)`，name 分别为工具列表 JSON 和指令文本；顶层 `tools`、`instructions` 删除。已发送 `additional_tools` 项的 lite-aware 客户端输入保持原样
 - Responses Lite 模型会删除 message、`function_call_output`、`custom_tool_call_output` 图片内容中的 `detail`
-- `prompt_cache_key` 显式传入时保留；缺省时按客户端代理密钥生成稳定 UUID，并作为默认上游 `session-id`、`thread-id`
+- `prompt_cache_key` 保留显式 `null` 和非空缓存键。缺省时按代理密钥生成稳定 UUID，供缓存键及会话头兜底。
 - 多凭据场景按 Codex 会话头做凭据粘连；粘连键只来自 `session-id`，没有该头时使用 `thread-id`，凭据不可用或上游返回可轮换错误时才切换备用凭据
 
 发往上游 Codex 的请求头处理：
@@ -275,12 +275,12 @@ Responses 入口会在转发前执行以下处理：
 - `x-client-request-id` 显式传入时作为上游 `X-Client-Request-Id`；否则使用当前 `thread-id`
 - `originator` 显式传入时透传；否则使用 `codex_cli_rs`
 - `User-Agent` 显式传入时透传；否则生成 `codex_cli_rs/<有效版本>`；旧的 `USER_AGENT` 环境变量不再参与请求构造
-- `version` 显式传入时透传；否则不发送（Codex CLI 0.153 已不再发送该头），`CODEX_CLI_VERSION` 只用于生成 `User-Agent`
+- `version` 显式传入时透传。`CODEX_CLI_VERSION` 用于生成兜底 `User-Agent`。
 - `x-codex-routing-hint` 显式传入时透传；否则按 `model=<slug>[;tier=<service_tier>]` 生成（Guardian reviewer 请求不生成）
 - 凭证 id_token 标记 `chatgpt_account_is_fedramp` 时附加 `X-OpenAI-Fedramp: true`
 - `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-codex-guardian`、`x-openai-internal-codex-responses-lite` 存在时透传；Responses Lite 模型固定携带 `x-openai-internal-codex-responses-lite: true`
 - 请求体 `Content-Encoding: zstd`（Codex CLI 默认）、`gzip`、`deflate`、`br` 由 `readJsonObject()` 用 Node 内置 `zlib` 解压；运行时缺少 zstd（Node < 22.15）时返回 `415 unsupported_content_encoding`
-- 上游响应头 `x-codex-turn-state`、`openai-model`、`x-reasoning-included`、`x-models-etag`、`x-request-id`、`x-codex-promo-message`、`x-codex-active-limit`、`x-codex-rate-limit-reached-type` 原样返回；上游 `response.failed` 事件按 `src/codex-errors.ts` 映射为 `400`/`429`/`503`/`502`，`rate_limit_exceeded` 会从消息解析 `Retry-After`
+- 上游响应头 `x-codex-turn-state`、`openai-model`、`x-reasoning-included`、`x-models-etag`、`x-request-id`、`x-codex-promo-message`、`x-codex-active-limit`、`x-codex-rate-limit-reached-type` 原样返回。聚合响应按 `src/codex-errors.ts` 映射流内错误，并读取事件或上游 HTTP 的 `Retry-After`。限速错误也可从消息提取重试时间。
 
 Chat Completions 入口会先转成 Responses：
 
@@ -416,7 +416,7 @@ OpenAI 的 `refresh_token` 只能使用一次。出现这个错误时，当前�
 
 ### 为什么有的 400 不会切换凭证
 
-400 通常表示请求参数不合法，切换凭证不能修复请求体。当前实现只对 401、403、429、5xx 做凭证轮换。
+400 通常表示请求参数不合法，切换凭证不能修复请求体。401、403、429、5xx 中的可轮换错误才会触发凭证切换。
 
 ### 为什么请求明细最多只显示一部分
 

@@ -49,7 +49,7 @@ export async function prepareCodexPayload(
     payload.stream = true;
   }
   payload.store = false;
-  payload.parallel_tool_calls = true;
+  payload.parallel_tool_calls = input.parallel_tool_calls !== false;
   delete payload.previous_response_id;
   delete payload.prompt_cache_retention;
   delete payload.safety_identifier;
@@ -62,7 +62,7 @@ export async function prepareCodexPayload(
   delete payload.context_management;
   delete payload.user;
   applyServiceTier(payload, stringValue(input.service_tier), settings, options.guardianReviewer === true);
-  if (identity.promptCacheKey !== undefined) {
+  if (payload.prompt_cache_key !== null && identity.promptCacheKey !== undefined) {
     payload.prompt_cache_key = identity.promptCacheKey;
   }
   normalizeResponsesInputRoles(payload);
@@ -161,18 +161,25 @@ async function applyResponsesLiteFormat(payload: JsonObject, threadId: string | 
     dropEmptyInstructions(payload);
     return;
   }
+  const tools = buildResponsesLiteTools(Array.isArray(payload.tools) ? payload.tools : []);
+  const instructions = typeof payload.instructions === "string" ? payload.instructions : "";
+  delete payload.tools;
+  delete payload.instructions;
+  if (tools.length === 0 && instructions === "") {
+    return;
+  }
   // Codex rebuilds these prompt-only items on every request and hashes their
   // payload within the thread into stable ids, so retries and resumed sessions
   // keep the same prefix (core/src/client.rs build_responses_request).
   const prefixNamespace = threadId === undefined ? undefined : (await uuidV5(threadId)).replaceAll("-", "");
-  const tools = buildResponsesLiteTools(Array.isArray(payload.tools) ? payload.tools : []);
-  const additionalTools: JsonObject = { type: "additional_tools", role: "developer", tools };
-  if (prefixNamespace !== undefined) {
-    additionalTools.id = `at_${await uuidV5(JSON.stringify(tools), prefixNamespace)}`;
+  const prefix: JsonValue[] = [];
+  if (tools.length > 0) {
+    const additionalTools: JsonObject = { type: "additional_tools", role: "developer", tools };
+    if (prefixNamespace !== undefined) {
+      additionalTools.id = `at_${await uuidV5(JSON.stringify(tools), prefixNamespace)}`;
+    }
+    prefix.push(additionalTools);
   }
-  const prefix: JsonValue[] = [additionalTools];
-  delete payload.tools;
-  const instructions = typeof payload.instructions === "string" ? payload.instructions : "";
   if (instructions !== "") {
     const message: JsonObject = {
       type: "message",
@@ -184,9 +191,6 @@ async function applyResponsesLiteFormat(payload: JsonObject, threadId: string | 
     }
     prefix.push(message);
   }
-  // Codex never sends top-level instructions on lite requests: they either moved
-  // into the developer message above or were empty to begin with.
-  delete payload.instructions;
   input.unshift(...prefix);
 }
 

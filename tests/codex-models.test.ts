@@ -9,9 +9,15 @@ import {
   reasoningEffortForRequest,
   supportedServiceTiers,
 } from "../src/codex-models.js";
+import { configuredModels } from "../src/env.js";
 
-test("catalog lists gpt-6.1-sol first as the codex default", () => {
-  assert.equal(CODEX_MODEL_CATALOG[0]?.slug, "gpt-6.1-sol");
+test("catalog defaults to gpt-6.2-sol and the configured list excludes hidden models", () => {
+  assert.equal(CODEX_MODEL_CATALOG[0]?.slug, "gpt-6.2-sol");
+  assert.deepEqual(configuredModels({}), [
+    "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-astra",
+    "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
+  ]);
+  assert.deepEqual(configuredModels({ MODELS: " gpt-5.5, codex-auto-review " }), ["gpt-5.5", "codex-auto-review"]);
   assert.equal(lookupCodexModel("gpt-6.1-sol")?.useResponsesLite, true);
   assert.equal(lookupCodexModel("gpt-6.1-sol")?.defaultReasoningEffort, "low");
   assert.equal(lookupCodexModel("gpt-6-astra")?.useResponsesLite, true);
@@ -20,10 +26,6 @@ test("catalog lists gpt-6.1-sol first as the codex default", () => {
 });
 
 test("catalog carries gpt-6-sol and gpt-6-luna as responses lite models", () => {
-  assert.deepEqual(
-    CODEX_MODEL_CATALOG.slice(0, 4).map((info) => info.slug),
-    ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"],
-  );
   assert.equal(lookupCodexModel("gpt-6-sol")?.useResponsesLite, true);
   assert.equal(lookupCodexModel("gpt-6-luna")?.useResponsesLite, true);
   assert.equal(lookupCodexModel("gpt-6-sol")?.defaultReasoningEffort, "medium");
@@ -46,6 +48,10 @@ test("unknown slugs fall back to model family prefixes for lite detection", () =
 });
 
 test("ultra maps to the model's multi-agent effort, otherwise max", () => {
+  for (const model of ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra"]) {
+    assert.equal(lookupCodexModel(model)?.useResponsesLite, true);
+    assert.equal(reasoningEffortForRequest(model, "ultra"), "xhigh");
+  }
   assert.equal(reasoningEffortForRequest("gpt-6-astra", "ultra"), "xhigh");
   assert.equal(reasoningEffortForRequest("gpt-6.1-sol", "ultra"), "xhigh");
   assert.equal(reasoningEffortForRequest("gpt-5.6-sol", "ultra"), "max");
@@ -64,6 +70,7 @@ test("persistent is spelled disabled on the wire and other levels pass through",
 });
 
 test("service tiers come from the catalog", () => {
+  assert.deepEqual(supportedServiceTiers("gpt-6.2-sol"), ["priority", "ultrafast"]);
   // ultrafast was withdrawn from gpt-5.6-sol upstream.
   assert.deepEqual(supportedServiceTiers("gpt-5.6-sol"), ["priority"]);
   assert.deepEqual(supportedServiceTiers("gpt-6-sol"), ["priority"]);

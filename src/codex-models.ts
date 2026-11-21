@@ -9,12 +9,13 @@ export interface CodexModelInfo {
   // defines one (codex-rs: ModelInfo.multi_agent_reasoning_effort).
   multiAgentReasoningEffort?: string;
   serviceTiers: readonly string[];
+  hidden?: boolean;
   // Tier Codex requests when the user has not chosen one
   // (codex-rs: ModelPreset.default_service_tier).
   defaultServiceTier?: string;
 }
 
-// Snapshot of codex-rs/models-manager/models.json (openai/codex rust-v0.159.2, 2026-09-29).
+// Snapshot of codex-rs/models-manager/models.json (openai/codex rust-v0.170.0).
 // Only the fields the proxy needs for request shaping are kept here; the order
 // follows the catalog priority so the first entry is Codex's default model.
 const EFFORTS_UP_TO_ULTRA = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
@@ -22,6 +23,31 @@ const EFFORTS_UP_TO_MAX = ["low", "medium", "high", "xhigh", "max"] as const;
 const EFFORTS_UP_TO_XHIGH = ["low", "medium", "high", "xhigh"] as const;
 
 export const CODEX_MODEL_CATALOG: readonly CodexModelInfo[] = [
+  {
+    slug: "gpt-6.2-sol",
+    useResponsesLite: true,
+    supportedReasoningEfforts: EFFORTS_UP_TO_ULTRA,
+    defaultReasoningEffort: "low",
+    multiAgentReasoningEffort: "xhigh",
+    // The remote catalog advertises Ultrafast to eligible accounts.
+    serviceTiers: ["priority", "ultrafast"],
+  },
+  {
+    slug: "gpt-6.2-astra",
+    useResponsesLite: true,
+    supportedReasoningEfforts: EFFORTS_UP_TO_ULTRA,
+    defaultReasoningEffort: "low",
+    multiAgentReasoningEffort: "xhigh",
+    serviceTiers: ["priority", "ultrafast"],
+  },
+  {
+    slug: "gpt-6.1-terra",
+    useResponsesLite: true,
+    supportedReasoningEfforts: EFFORTS_UP_TO_ULTRA,
+    defaultReasoningEffort: "low",
+    multiAgentReasoningEffort: "xhigh",
+    serviceTiers: ["priority"],
+  },
   {
     slug: "gpt-6.1-sol",
     useResponsesLite: true,
@@ -77,6 +103,7 @@ export const CODEX_MODEL_CATALOG: readonly CodexModelInfo[] = [
   },
   {
     slug: "gpt-daybreak-blue-latest",
+    hidden: true,
     useResponsesLite: true,
     supportedReasoningEfforts: EFFORTS_UP_TO_ULTRA,
     defaultReasoningEffort: "low",
@@ -84,6 +111,7 @@ export const CODEX_MODEL_CATALOG: readonly CodexModelInfo[] = [
   },
   {
     slug: "gpt-daybreak-red-latest",
+    hidden: true,
     useResponsesLite: true,
     supportedReasoningEfforts: EFFORTS_UP_TO_ULTRA,
     defaultReasoningEffort: "medium",
@@ -98,6 +126,7 @@ export const CODEX_MODEL_CATALOG: readonly CodexModelInfo[] = [
   },
   {
     slug: "codex-auto-review",
+    hidden: true,
     useResponsesLite: true,
     supportedReasoningEfforts: EFFORTS_UP_TO_MAX,
     defaultReasoningEffort: "medium",

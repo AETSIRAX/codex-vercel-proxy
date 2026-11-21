@@ -96,9 +96,9 @@ test("codex JSON endpoint headers apply the verified default client identity", (
     true,
   );
 
-  // Current Codex clients identify themselves through User-Agent only.
+  // The proxy generates a fallback User-Agent and only forwards an explicit Version.
   assert.equal(headers.has("version"), false);
-  assert.equal(headers.get("user-agent"), "codex_cli_rs/0.159.2");
+  assert.equal(headers.get("user-agent"), "codex_cli_rs/0.170.0");
   assert.equal(headers.get("content-type"), "application/json");
 });
 

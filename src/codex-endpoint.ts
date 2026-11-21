@@ -57,9 +57,7 @@ export function buildCodexRequestHeaders(
   headers.set("Authorization", `Bearer ${credential.token}`);
   headers.set("User-Agent", userAgent(env, request.headers));
   headers.set("Connection", "Keep-Alive");
-  // Current Codex clients no longer send a Version header: the client version
-  // travels in User-Agent and in the /models client_version query. Forward it
-  // only when an older client still sets it.
+  // Preserve the client's version when supplied.
   copyHeader(request.headers, headers, "Version");
   copyHeader(request.headers, headers, "If-None-Match");
   copyHeader(request.headers, headers, "X-OAI-Attestation");

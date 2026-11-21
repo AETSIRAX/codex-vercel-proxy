@@ -18,11 +18,11 @@ Codex Vercel Proxy 是一个部署在 Vercel Functions 上的 Codex 代理服务
 
 - OpenAI 兼容接口：`/v1/models`、`/v1/responses`、`/v1/chat/completions`
 - Codex 后端接口：`/v1/alpha/search`、`/v1/responses/compact`、`/v1/images/generations`、`/v1/images/edits`、`/v1/memories/trace_summarize`
-- Responses Lite 模型：内置 GPT-6 系列（`gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`，其中 `gpt-6.1-sol` 是 Codex 当前默认模型）和 GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`），按 Codex 模型目录自动以 Responses Lite 协议适配上游请求，工具、指令和稳定 id 的组装方式与 Codex CLI 一致；思考等级 `ultra`、`persistent` 按 Codex 的逐模型规则映射
+- Responses Lite 模型按 Codex 目录适配工具、指令、稳定 id 和思考等级。内置默认模型为 `gpt-6.2-sol`。
 - 请求体压缩：兼容 Codex CLI 默认开启的 zstd 请求体压缩（同时支持 gzip、deflate、br），运行时不支持时返回 `415` 并提示关闭 `enable_request_compression`
 - OAuth 登录：控制面板内置 Codex OAuth 登录（PKCE），浏览器登录 OpenAI 账号后粘贴回调地址即可自动获取并导入凭证，无需手动准备 token JSON
 - 凭证池管理：支持多条 Codex 凭证导入、状态查看、启用、禁用、刷新和删除
-- 自动轮换：上游返回 `401` 时先刷新当前凭证 token 并原凭证重试（与 Codex CLI 一致），仍失败或返回 `403`、`429`、`5xx` 时自动尝试下一条可用凭证
+- 自动轮换：上游返回 `401` 时先刷新当前凭证 token 并原凭证重试（与 Codex CLI 一致），恢复失败或收到可轮换的 `403`、`429`、`5xx` 时尝试下一条可用凭证。已识别的模型、请求拒绝和容量错误直接返回。
 - Token 刷新：支持到期前懒刷新和 Vercel Cron 定时刷新
 - 请求规范化：对齐 Codex 上游预期参数，并兼容常见 OpenAI 客户端调用方式
 - 缓存路由：保留 `prompt_cache_key`，缺省时自动为 Codex 请求生成稳定缓存键
@@ -93,8 +93,8 @@ Codex upstream / Postgres
 | `ADMIN_TOKEN` | 首次初始化 | `/admin/*` 和控制面板访问密钥，后续可在控制面板更新 |
 | `CRON_SECRET` | 是 | `/cron/refresh` 和 `/cron/cleanup` 定时任务接口密钥 |
 | `CRED_ENCRYPTION_KEY` | 是 | 凭证加密密钥，建议使用长随机字符串 |
-| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5` |
-| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 Codex CLI 版本，默认 `0.159.2`（`gpt-6-sol`、`gpt-6-luna` 要求 0.155.0 及以上） |
+| `MODELS` | 否 | `/v1/models` 返回的模型列表，逗号分隔，默认 `gpt-6.2-sol,gpt-6.2-astra,gpt-6.1-terra,gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5` |
+| `CODEX_CLI_VERSION` | 否 | 客户端未发送 `User-Agent` 时用于生成 `codex_cli_rs/<版本>` 的 Codex CLI 版本，默认 `0.170.0` |
 | `RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS` | 否 | 成功请求后同一凭证配额快照最小刷新间隔，默认 `60`；usage limit 失败会强制刷新 |
 | `REFRESH_LEAD_SECONDS` | 否 | token 到期前多少秒触发刷新，默认 `2 * 24 * 60 * 60` |
 | `REFRESH_MIN_INTERVAL_SECONDS` | 否 | 强制刷新最小间隔，默认 `300` |
@@ -153,8 +153,8 @@ PROXY_API_KEY=replace-with-local-proxy-key
 ADMIN_TOKEN=replace-with-local-admin-token
 CRON_SECRET=replace-with-local-cron-secret
 CRED_ENCRYPTION_KEY=replace-with-a-long-random-secret
-MODELS=gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5
-CODEX_CLI_VERSION=0.159.2
+MODELS=gpt-6.2-sol,gpt-6.2-astra,gpt-6.1-terra,gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5
+CODEX_CLI_VERSION=0.170.0
 RATE_LIMIT_REFRESH_MIN_INTERVAL_SECONDS=60
 REFRESH_LEAD_SECONDS=172800
 REFRESH_MIN_INTERVAL_SECONDS=300
@@ -318,16 +318,16 @@ OpenAI 的 `refresh_token` 是一次性 token。刷新成功后，服务会把�
 
 ## Responses Lite 模型与思考等级
 
-代理内置一份 Codex 模型目录快照（`src/codex-models.ts`，来源于 Codex CLI 0.159.2（2026-09-29）的 `models.json`），用于判断哪些模型走 Responses Lite 协议、各模型支持的思考等级、service tier 和默认 service tier。GPT-6 系列（`gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`）、GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`）、`gpt-daybreak-*` 和 `codex-auto-review` 在上游使用 Responses Lite 协议；目录之外的模型按 `gpt-6`、`gpt-5.6`、`gpt-daybreak`、`codex-auto-review` 系列前缀判断（同时覆盖 `gpt-6-*` 这类变体和 `gpt-6.2-*` 这类小版本）。`gpt-5.4` 已随 Codex 下线，不再内置。代理会对这些模型自动完成适配：
+代理内置一份 Codex 模型目录快照（`src/codex-models.ts`，基于 Codex CLI 0.170.0 的 `models.json`），用于判断哪些模型走 Responses Lite 协议、各模型支持的思考等级、service tier 和默认 service tier。GPT-6 系列（含 `gpt-6.2-sol`、`gpt-6.2-astra`、`gpt-6.1-terra`）、GPT-5.6 系列（`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`）、`gpt-daybreak-*` 和 `codex-auto-review` 在上游使用 Responses Lite 协议；目录之外的模型按 `gpt-6`、`gpt-5.6`、`gpt-daybreak`、`codex-auto-review` 系列前缀判断（同时覆盖 `gpt-6-*` 这类变体和 `gpt-6.2-*` 这类小版本）。`gpt-5.4` 已随 Codex 下线，不再内置。代理会对这些模型自动完成适配：
 
 - 上游请求附带 `x-openai-internal-codex-responses-lite: true` 请求头，`parallel_tool_calls` 固定为 `false`，`reasoning.context` 缺省时补为 `all_turns`；
 - Lite 请求会清除 message、`function_call_output` 和 `custom_tool_call_output` 图片内容中的 `detail` 字段；
-- 工具和指令的组装方式与 Codex CLI 完全一致：`function`、`custom` 工具会被包进 `{"type":"namespace","name":"functions","tools":[...]}`（放在第一个函数工具原来的位置），`web_search`、`tool_search` 等其他工具保持原顺序，整个工具列表作为一个 `additional_tools` 项（没有工具时为空列表）前置到 `input`，顶层 `tools` 和 `instructions` 不再发送；非空 `instructions` 转换为紧随其后的 developer 消息。这两个前缀项带有稳定 id（`at_<uuidv5>`、`msg_<uuidv5>`，命名空间由当前 `thread-id` 派生，与 Codex 相同），同一线程内内容不变时 id 不变，便于上游缓存前缀；
+- Lite 工具和指令按 Codex 请求格式组装。`function`、`custom` 工具会被包进 `{"type":"namespace","name":"functions","tools":[...]}`（放在第一个函数工具原来的位置），`web_search`、`tool_search` 等其他工具保持原顺序，有工具时将整个列表作为 `additional_tools` 项前置到 `input`。非空 `instructions` 转为 developer 消息，排在工具项之后或作为首项。顶层 `tools` 和 `instructions` 随后移除。这两个前缀项带有稳定 id（`at_<uuidv5>`、`msg_<uuidv5>`，命名空间由当前 `thread-id` 派生，与 Codex 相同），同一线程内内容不变时 id 不变，便于上游缓存前缀；
 - 如果客户端（如 Codex CLI 0.144+）已经发送 `additional_tools` 项，输入保持原样；
 - 托管工具（如 `web_search`）会随其他工具一起进入 `additional_tools`。Codex CLI 自身不会给 lite 模型发送托管搜索（其搜索由 CLI 本地 `web.run` 工具执行），lite 上游是否接受由上游决定；需要服务端 `web_search` 请使用 `gpt-5.5` 及更早模型；
-- 思考等级按模型目录映射：`ultra` 是 Codex 客户端本地概念，发送上游时取该模型的 `multi_agent_reasoning_effort`（如 `gpt-6.1-sol`、`gpt-6-astra` 为 `xhigh`），没有则取 `max`（如 `gpt-6-sol`、`gpt-6-luna`），仍不支持时取该模型最高的非 ultra 等级（如 `gpt-5.5` 为 `xhigh`）；`persistent` 映射为 `disabled`；
+- 思考等级按模型目录映射：`ultra` 是 Codex 客户端本地概念，发送上游时取该模型的 `multi_agent_reasoning_effort`（如 GPT-6.2 Sol、GPT-6.2 Astra 和 GPT-6.1 Terra 为 `xhigh`），没有则取 `max`（如 `gpt-6-sol`、`gpt-6-luna`），仍不支持时取该模型最高的非 ultra 等级（如 `gpt-5.5` 为 `xhigh`）；`persistent` 映射为 `disabled`；
 - 无论请求是否带 `reasoning`，都会追加 `include: ["reasoning.encrypted_content"]`，与 Codex CLI 一致；可解析为非负整数的自定义思考等级（如 `"64"`）按 JSON 数字发送，与 Codex 0.159 一致；
-- Codex App/CLI 传入的 `User-Agent` 和 `version` 会原样转发。普通客户端缺少 `User-Agent` 时，代理用 `CODEX_CLI_VERSION`（默认 `0.159.2`）生成 `codex_cli_rs/<版本>`；当前 Codex CLI 已不再发送 `version` 请求头，代理也不会伪造它。旧的 `USER_AGENT` 环境变量不再参与请求构造。
+- Codex App/CLI 传入的 `User-Agent` 和 `version` 会原样转发。普通客户端缺少 `User-Agent` 时，代理用 `CODEX_CLI_VERSION`（默认 `0.170.0`）生成 `codex_cli_rs/<版本>`。代理仅在客户端提供时转发 `version`。旧的 `USER_AGENT` 环境变量不再参与请求构造。
 
 `gpt-5.5` 及更早模型不受 lite 适配影响，仍按原有方式转发。
 
@@ -341,7 +341,7 @@ Codex CLI 默认开启 `enable_request_compression`，用 zstd 压缩 `/v1/respo
 
 ## Prompt Caching
 
-服务会保留客户端显式传入的 `prompt_cache_key`。如果请求没有传入该字段，会按调用方的代理密钥生成稳定 UUID，并把同一个值同时作为请求体 `prompt_cache_key` 以及默认上游 `session-id`、`thread-id` 发送。
+服务会保留显式传入的 `prompt_cache_key`，包括 JSON `null`。缺省时按调用方的代理密钥生成稳定 UUID。上游 `session-id` 和 `thread-id` 缺省时使用非空缓存键或同一代理派生 UUID。
 
 客户端显式传入 `session-id` 或 `thread-id` 请求头时，这两个请求头会用于上游请求；`prompt_cache_key` 仍按请求体字段或代理自动生成值处理。服务还会透传 `version`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-codex-routing-hint` 和 `x-codex-guardian`，`x-client-request-id` 缺省时使用当前 `thread-id`；FedRAMP 账号（id_token 中 `chatgpt_account_is_fedramp` 为真）会附加 `X-OpenAI-Fedramp: true`。上游响应中的 `x-codex-turn-state`、`openai-model`、`x-reasoning-included`、`x-models-etag`、`x-request-id`、`x-codex-promo-message`、`x-codex-active-limit`、`x-codex-rate-limit-reached-type` 会原样返回给客户端。
 

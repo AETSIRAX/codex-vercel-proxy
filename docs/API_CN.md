@@ -80,7 +80,7 @@ curl -i "https://<vercel-domain>/healthz"
 
 ## GET /v1/models
 
-普通请求返回 `MODELS` 环境变量配置的 OpenAI 格式模型列表。未配置时默认返回 `gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5`。
+普通请求返回 `MODELS` 环境变量配置的 OpenAI 格式模型列表。未配置时默认返回 `gpt-6.2-sol,gpt-6.2-astra,gpt-6.1-terra,gpt-6.1-sol,gpt-6-astra,gpt-6-sol,gpt-6-luna,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5`。
 
 Codex CLI 携带 `client_version` 查询参数时，请求会转发到 Codex 原生 `/models` 端点，响应保持 `{"models":[...]}` 格式，并透传 `If-None-Match`/`ETag` 缓存语义。
 
@@ -213,7 +213,7 @@ data: {"type":"response.output_text.delta","delta":"Hello",...}
 data: {"type":"response.completed","response":{...}}
 ```
 
-`incomplete_details.reason` 为 `interrupted` 的 `response.incomplete` 与 Codex 一样按正常结束处理；Flex 容量不足（`flex_unavailable`）直接返回 429，不冷却凭证也不轮换。上游在 `response.completed` 或 `response.failed` 之前断开时，代理会补发一个 `data: {"type":"error","code":"bad_upstream_response","message":"..."}` 事件再结束流，而不是让流看起来正常完成；Chat Completions 对应输出一个 `error` chunk 后跟 `[DONE]`。客户端主动断开连接时，代理会立即取消上游请求，不计入凭证失败。
+`incomplete_details.reason` 为 `interrupted` 的 `response.incomplete` 与 Codex 一样按正常结束处理。已识别的请求拒绝、模型错误和容量错误直接返回，凭证可继续使用。聚合响应保留错误码，并通过 `Retry-After` 返回上游给出的重试时间。上游在 `response.completed` 或 `response.failed` 之前断开时，代理会补发一个 `data: {"type":"error","code":"bad_upstream_response","message":"..."}` 事件再结束流，而不是让流看起来正常完成；Chat Completions 对应输出一个 `error` chunk 后跟 `[DONE]`。客户端主动断开连接时，代理会立即取消上游请求，不计入凭证失败。
 
 ### Responses 请求处理规则
 
@@ -224,15 +224,15 @@ data: {"type":"response.completed","response":{...}}
 | `input` 字符串 | 转为 `[{type:"message",role:"user",content:[...]}]` |
 | `stream` | 强制上游为 `true` |
 | `store` | 强制为 `false` |
-| `parallel_tool_calls` | 强制为 `true`；Responses Lite 模型固定为 `false` |
+| `parallel_tool_calls` | 普通模型缺省为 `true`，保留显式 `false`。Responses Lite 固定为 `false` |
 | `include` | 总是追加 `"reasoning.encrypted_content"`（与 Codex CLI 一致），其他 include 值保留 |
 | `reasoning.effort` | `ultra` 按模型目录映射为该模型的 `multi_agent_reasoning_effort`，否则 `max`，再否则该模型最高的非 ultra 等级；`persistent` 映射为 `disabled` |
-| `prompt_cache_key` | 显式传入时原样保留；缺省时按代理密钥生成稳定 UUID，并作为默认上游 `session-id`、`thread-id` |
+| `prompt_cache_key` | 保留显式 `null` 和非空缓存键。缺省时按代理密钥生成稳定 UUID |
 | `input[].role="system"` | 改为 `developer` |
 | `instructions` 缺失或 `null` | 改为空字符串 |
 | `web_search_preview`、`web_search_preview_2025_03_11` | 改为 `web_search` |
 | `service_tier` | 客户端显式传入时优先（`default` 视为不发送）；未传入时由控制面板 Fast mode 兜底写入 `priority`，Fast mode 关闭时取模型目录默认 tier（`gpt-6-sol`、`gpt-6-luna` 为 `priority`）。最终值按 Codex 模型目录过滤，模型不支持的 tier 会被丢弃；`flex` 始终保留；`x-codex-guardian: reviewer` 请求不发送 |
-| Responses Lite 工具与指令 | `input` 中没有 `additional_tools` 项时：`function`、`custom` 工具包进 `functions` namespace，与其他工具一起组成 `additional_tools` 项前置到 `input`，非空 `instructions` 转为 developer 消息；两者带有由 `thread-id` 派生的稳定 id（`at_`、`msg_` 前缀）；顶层 `tools`、`instructions` 不发送 |
+| Responses Lite 工具与指令 | `input` 中没有 `additional_tools` 项时：`function`、`custom` 工具包进 `functions` namespace，与其他工具一起组成 `additional_tools` 项前置到 `input`。工具列表为空时省略该项。非空 `instructions` 转为 developer 消息。生成的前缀项带有由 `thread-id` 派生的稳定 id（`at_`、`msg_`），转换后删除顶层 `tools`、`instructions` |
 | `stream_options.reasoning_summary_delivery` | 仅保留 Codex 当前支持的 `sequential_cutoff`，删除其他值和额外字段 |
 | 图片 `detail` | Responses Lite 请求会从 message、`function_call_output`、`custom_tool_call_output` 的 `input_image` 中删除 |
 
@@ -259,8 +259,8 @@ user
 - `session-id` 和 `thread-id`：客户端显式传入时使用请求头值；否则使用 `prompt_cache_key` 或代理按 API KEY 生成的稳定 UUID。
 - `X-Client-Request-Id`：客户端显式传入 `x-client-request-id` 时使用该值；否则使用当前 `thread-id`。
 - `originator`：客户端显式传入时使用该值；否则为 `codex_cli_rs`。
-- `User-Agent`：客户端显式传入时原样转发；否则生成 `codex_cli_rs/<CODEX_CLI_VERSION>`（默认 `0.159.2`）。旧的 `USER_AGENT` 环境变量不再参与请求构造。
-- `version`：客户端显式传入时原样转发；否则不发送（当前 Codex CLI 已不再发送该请求头）。
+- `User-Agent`：客户端显式传入时原样转发；否则生成 `codex_cli_rs/<CODEX_CLI_VERSION>`（默认 `0.170.0`）。旧的 `USER_AGENT` 环境变量不再参与请求构造。
+- `version`：客户端显式传入时原样转发。
 - `x-codex-routing-hint`：客户端显式传入时透传；否则按 `model=<slug>[;tier=<service_tier>]` 生成（`x-codex-guardian: reviewer` 请求不生成）。
 - `X-OpenAI-Fedramp: true`：凭证 id_token 标记为 FedRAMP 账号时附加。
 - `x-oai-attestation`、`x-openai-subagent`、`x-openai-memgen-request`、`x-codex-turn-state`、`x-codex-turn-metadata`、`x-codex-window-id`、`x-codex-parent-thread-id`、`x-codex-installation-id`、`x-codex-beta-features`、`x-codex-guardian`：存在时透传给上游。
@@ -381,6 +381,7 @@ Chat 转换基础字段：
 - 流式响应会把 `response.output_text.delta` 转成 `delta.content`，把 `response.reasoning_summary_text.delta` 转成 `delta.reasoning_content`。
 - 工具调用会从 Codex `function_call` 事件还原为 Chat Completions 的 `tool_calls`；如果请求时函数名因 Codex 长度限制被缩短，响应会恢复成客户端原始函数名。
 - 当响应包含工具调用时，`finish_reason` 为 `tool_calls`，否则为 `stop`。
+- 流式错误在上游提供重试提示时包含 `error.retry_after`，单位为秒。
 
 ## GET /admin/health
 
